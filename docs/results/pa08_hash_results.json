@@ -1,0 +1,41 @@
+{
+  "multi_message": {
+    "all_distinct": false,
+    "digests": {
+      "b''": "12",
+      "b'hello'": "06",
+      "b'hello world'": "03",
+      "b'AAAAAAAAAAAAAAAAAAAA'": "06",
+      "b'The quick brown fox '": "12",
+      "b'\\x00\\x01\\x02\\x03\\x04\\x05\\x06\\x07\\x08\\t\\n\\x0b\\x0c\\r\\x0e\\x0f\\x10\\x11\\x12\\x13'": "12"
+    }
+  },
+  "collision_search": {
+    "collision_found": true,
+    "evaluations": 12,
+    "birthday_bound": 3,
+    "pair_1": [
+      0,
+      4
+    ],
+    "pair_2": [
+      1,
+      0
+    ],
+    "hash_value": 4,
+    "dlp_recovery": {
+      "collision": {
+        "x1": 0,
+        "y1": 4,
+        "x2": 1,
+        "y2": 0
+      },
+      "h_value": 4,
+      "alpha_trapdoor": 3,
+      "alpha_recovered": 3,
+      "recovery_correct": true,
+      "formula": "\u03b1 = (x1 - x2) * (y2 - y1)^{-1} mod q",
+      "conclusion": "Finding a collision in h() gives the discrete log \u03b1 = log_g(\u0125)."
+    }
+  }
+}

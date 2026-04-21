@@ -1,0 +1,24 @@
+{
+  "assumptions": {
+    "hashes_per_sec": 10000000000,
+    "description": "Modern high-end GPU cluster or custom ASIC speed estimate"
+  },
+  "MD5": {
+    "hash_name": "MD5",
+    "n_bits": 128,
+    "birthday_bound": "2^64 = 1.84e+19",
+    "hashes_per_sec": "1e+10",
+    "time_seconds": "1.84e+09",
+    "time_years": "5.85e+01",
+    "context": "At 1e+10 hashes/sec, a birthday attack on MD5 (n=128) requires 2^64 evaluations, taking approx 5.85e+01 years."
+  },
+  "SHA-1": {
+    "hash_name": "SHA-1",
+    "n_bits": 160,
+    "birthday_bound": "2^80 = 1.21e+24",
+    "hashes_per_sec": "1e+10",
+    "time_seconds": "1.21e+14",
+    "time_years": "3.83e+06",
+    "context": "At 1e+10 hashes/sec, a birthday attack on SHA-1 (n=160) requires 2^80 evaluations, taking approx 3.83e+06 years."
+  }
+}

@@ -1,0 +1,112 @@
+[
+  {
+    "n_bits": 8,
+    "num_trials": 100,
+    "collisions_found": 100,
+    "mean_evaluations": 19.8,
+    "birthday_bound": 16.0,
+    "mean_over_bound": 1.236,
+    "min_evals": 2,
+    "max_evals": 62,
+    "evals_distribution": [
+      2,
+      11,
+      6,
+      7,
+      30,
+      6,
+      22,
+      17,
+      20,
+      25
+    ]
+  },
+  {
+    "n_bits": 10,
+    "num_trials": 100,
+    "collisions_found": 100,
+    "mean_evaluations": 42.5,
+    "birthday_bound": 32.0,
+    "mean_over_bound": 1.327,
+    "min_evals": 5,
+    "max_evals": 98,
+    "evals_distribution": [
+      87,
+      72,
+      20,
+      37,
+      60,
+      41,
+      5,
+      48,
+      50,
+      23
+    ]
+  },
+  {
+    "n_bits": 12,
+    "num_trials": 100,
+    "collisions_found": 100,
+    "mean_evaluations": 82.0,
+    "birthday_bound": 64.0,
+    "mean_over_bound": 1.281,
+    "min_evals": 4,
+    "max_evals": 210,
+    "evals_distribution": [
+      66,
+      48,
+      34,
+      31,
+      125,
+      111,
+      60,
+      37,
+      92,
+      38
+    ]
+  },
+  {
+    "n_bits": 14,
+    "num_trials": 100,
+    "collisions_found": 100,
+    "mean_evaluations": 159.5,
+    "birthday_bound": 128.0,
+    "mean_over_bound": 1.246,
+    "min_evals": 15,
+    "max_evals": 458,
+    "evals_distribution": [
+      224,
+      16,
+      293,
+      248,
+      163,
+      245,
+      31,
+      135,
+      266,
+      106
+    ]
+  },
+  {
+    "n_bits": 16,
+    "num_trials": 100,
+    "collisions_found": 100,
+    "mean_evaluations": 320.1,
+    "birthday_bound": 256.0,
+    "mean_over_bound": 1.25,
+    "min_evals": 12,
+    "max_evals": 887,
+    "evals_distribution": [
+      289,
+      304,
+      465,
+      353,
+      628,
+      246,
+      536,
+      147,
+      525,
+      224
+    ]
+  }
+]

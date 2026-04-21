@@ -1,0 +1,28 @@
+{
+  "message_bytes": 32,
+  "trials": 200,
+  "PA6_PRF_MAC": {
+    "tag_size_bytes": 16,
+    "enc_time_us": 2634.85,
+    "dec_time_us": 2777.44
+  },
+  "PA10_HMAC": {
+    "tag_size_bytes": 1,
+    "enc_time_us": 944.66,
+    "dec_time_us": 901.57
+  },
+  "comparison": {
+    "enc_overhead_factor": 0.36,
+    "dec_overhead_factor": 0.32,
+    "note": "HMAC uses DLP hash (slower but provably secure from CRHF). PRF-MAC uses AES (faster, PRP-based)."
+  },
+  "length_extension_immunity": {
+    "original_message": "506572666f726d616e636520636f6d70617269736f6e206d6573736167652121",
+    "extension": "41545441434b45525f415050454e44",
+    "original_hmac": "0d",
+    "forged_attempt": "01",
+    "real_tag_for_extension": "0d",
+    "attack_succeeded": false,
+    "conclusion": "HMAC is immune to length extension. Naive H(k \u2225 m) is not."
+  }
+}

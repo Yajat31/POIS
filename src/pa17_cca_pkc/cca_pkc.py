@@ -20,7 +20,7 @@ from __future__ import annotations
 from src.pa15_signatures.signatures import Sign, Verify
 from src.pa16_elgamal.elgamal import (
     ElGamalPublicKey, ElGamalPrivateKey, elgamal_keygen,
-    enc_bytes, dec_bytes,
+    enc_blob, dec_blob,
 )
 from src.pa12_rsa.rsa import RSAPublicKey, RSAPrivateKey, rsa_keygen
 from src.pa08_dlp_hash.dlp_hash import DLPHash, gen_dlp_hash_params, DEMO_PARAMS
@@ -33,66 +33,63 @@ def CCA_PKC_Enc(
     sk_sign: RSAPrivateKey,
     m: bytes,
     hash_fn: DLPHash | None = None,
-) -> tuple[tuple[int, int], bytes]:
+) -> tuple[tuple[bytes, bytes], bytes]:
     """Encrypt m and sign it. Returns (CE, σ).
 
-    CE = ElGamal encryption of (m ∥ σ).
+    CE = ElGamal byte-level encryption of (m ∥ σ) packed blob.
     σ = RSA hash-then-sign signature on m.
+
+    Uses enc_bytes/dec_bytes for blob transport (not integer encoding),
+    avoiding modular reduction that would destroy data for large blobs.
     """
     if hash_fn is None:
         params = gen_dlp_hash_params(DEMO_PARAMS)
         hash_fn = DLPHash(params, block_size=16)
 
-    # Step 1: Sign message
+    # Step 1: Sign message  (PA#15)
     sigma = Sign(sk_sign, m, hash_fn)
 
-    # Step 2: Pack m ∥ σ and encrypt under ElGamal
+    # Step 2: Pack m ∥ σ and encrypt under ElGamal KEM-blob (PA#16)
     plaintext_blob = pack_tuple(m, sigma)
-    # ElGamal works on integers: encode blob as integer mod p
-    p = pk_enc.params.p
-    from src.common.bytes_utils import bytes_to_int, int_to_bytes
-    blob_int = bytes_to_int(plaintext_blob) % p or 1
-    from src.pa16_elgamal.elgamal import Enc
-    CE = Enc(pk_enc, blob_int)
+    CE = enc_blob(pk_enc, plaintext_blob)
     return CE, sigma
 
 
 def CCA_PKC_Dec(
     sk_enc: ElGamalPrivateKey,
     vk_sign: RSAPublicKey,
-    CE: tuple[int, int],
+    CE: tuple[bytes, bytes],
     sigma: bytes,
     hash_fn: DLPHash | None = None,
 ) -> bytes | None:
     """Decrypt CE and verify signature. Returns m or None (⊥).
 
-    CRITICAL: Verify BEFORE using the plaintext.
+    CRITICAL: Verify BEFORE using the plaintext (verify-then-decrypt ordering).
     """
     if hash_fn is None:
         params = gen_dlp_hash_params(DEMO_PARAMS)
         hash_fn = DLPHash(params, block_size=16)
 
-    from src.pa16_elgamal.elgamal import Dec
-    from src.common.bytes_utils import bytes_to_int, int_to_bytes
-
-    c1, c2 = CE
-    # Decrypt ElGamal
-    blob_int = Dec(sk_enc, c1, c2)
-    p = sk_enc.params.p
-    byte_len = (p.bit_length() + 7) // 8
-    blob = int_to_bytes(blob_int, byte_len)
-
-    # Strip leading zeros from packing
+    # Decrypt ElGamal KEM-blob (PA#16)
     try:
-        m_bytes, sigma_recovered = unpack_tuple(blob.lstrip(b"\x00") or b"\x00\x00\x00\x01\x00\x00\x00\x01", 2)
-    except (ValueError, Exception):
-        return None  # ⊥ — malformed
+        c1, c2 = CE
+        blob = dec_blob(sk_enc, c1, c2)
+    except Exception:
+        return None  # ⊥ — decryption failed
 
-    # VERIFY FIRST (before trusting m_bytes)
+    # Unpack m ∥ σ
+    try:
+        m_bytes, _sigma_embedded = unpack_tuple(blob, 2)
+    except Exception:
+        return None  # ⊥ — malformed blob
+
+    # VERIFY FIRST (before trusting m_bytes) — critical for CCA security
     if not Verify(vk_sign, m_bytes, sigma, hash_fn):
         return None  # ⊥ — invalid signature
 
     return m_bytes
+
+
 
 
 def demo_lineage() -> str:

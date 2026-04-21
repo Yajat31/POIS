@@ -1,0 +1,12 @@
+{
+  "1024": {
+    "bits": 1024,
+    "n_decryptions": 100,
+    "std_total_ms": 349.68,
+    "crt_total_ms": 129.94,
+    "std_per_dec_ms": 3.4968,
+    "crt_per_dec_ms": 1.2994,
+    "speedup": 2.69,
+    "results_match": true
+  }
+}

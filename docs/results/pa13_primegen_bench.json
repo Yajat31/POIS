@@ -1,0 +1,32 @@
+{
+  "512": {
+    "bits": 512,
+    "trials": 10,
+    "mean_candidates": 190.8,
+    "pnt_expected": 354.89,
+    "ratio_mean_over_pnt": 0.538,
+    "min_candidates": 8,
+    "max_candidates": 456,
+    "mean_time_s": 0.1324
+  },
+  "1024": {
+    "bits": 1024,
+    "trials": 10,
+    "mean_candidates": 227.0,
+    "pnt_expected": 709.78,
+    "ratio_mean_over_pnt": 0.32,
+    "min_candidates": 10,
+    "max_candidates": 769,
+    "mean_time_s": 0.8433
+  },
+  "2048": {
+    "bits": 2048,
+    "trials": 10,
+    "mean_candidates": 670.7,
+    "pnt_expected": 1419.57,
+    "ratio_mean_over_pnt": 0.472,
+    "min_candidates": 191,
+    "max_candidates": 1394,
+    "mean_time_s": 16.0712
+  }
+}

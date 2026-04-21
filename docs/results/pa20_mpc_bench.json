@@ -1,0 +1,56 @@
+{
+  "equality": {
+    "n_bits": 8,
+    "x_int": 182,
+    "y_int": 182,
+    "output": 1,
+    "expected": 1,
+    "correct": true,
+    "and_ot_calls": 7,
+    "wall_clock_s": 0.0001,
+    "transcript_gates": 23
+  },
+  "comparison": {
+    "n_bits": 8,
+    "x_int": 182,
+    "y_int": 182,
+    "output": 0,
+    "expected": 0,
+    "correct": true,
+    "and_ot_calls": 15,
+    "wall_clock_s": 0.0002,
+    "transcript_gates": 37
+  },
+  "addition": {
+    "n_bits": 8,
+    "x_int": 182,
+    "y_int": 182,
+    "output": 108,
+    "expected": 108,
+    "correct": true,
+    "and_ot_calls": 15,
+    "wall_clock_s": 0.0001,
+    "transcript_gates": 37
+  },
+  "lineage": "SecureEval (PA#20) \u2192 AND (PA#19) \u2192 OTReceiverStep1/OTSenderStep/OTReceiverStep2 (PA#18) \u2192 ElGamal Enc/Dec (PA#16) \u2192 safe-prime DLP group (gen_group via PA#13 Miller-Rabin)",
+  "equality_all_cases": [
+    {
+      "x": 182,
+      "y": 182,
+      "eq_output": 1,
+      "expected": 1
+    },
+    {
+      "x": 203,
+      "y": 100,
+      "eq_output": 0,
+      "expected": 0
+    },
+    {
+      "x": 53,
+      "y": 202,
+      "eq_output": 0,
+      "expected": 0
+    }
+  ]
+}

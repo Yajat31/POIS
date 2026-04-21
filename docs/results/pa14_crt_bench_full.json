@@ -1,0 +1,26 @@
+{
+  "1024": {
+    "bits": 1024,
+    "n_decryptions": 1000,
+    "std_total_ms": 3601.34,
+    "crt_total_ms": 1303.98,
+    "std_per_dec_ms": 3.6013,
+    "crt_per_dec_ms": 1.304,
+    "speedup_x": 2.762,
+    "speedup_note": "CRT is 2.76× faster. Note: 2.76× at 1024-bit reflects Python big-integer overhead at smaller moduli. Asymptotic speedup converges toward 4× at 2048-bit+.",
+    "results_match": true,
+    "match_note": "All rsa_dec == rsa_dec_crt \u2705"
+  },
+  "2048": {
+    "bits": 2048,
+    "n_decryptions": 1000,
+    "std_total_ms": 24188.54,
+    "crt_total_ms": 7326.73,
+    "std_per_dec_ms": 24.1885,
+    "crt_per_dec_ms": 7.3267,
+    "speedup_x": 3.301,
+    "speedup_note": "CRT is 3.30× faster. Note: 2.76× at 1024-bit reflects Python big-integer overhead at smaller moduli. Asymptotic speedup converges toward 4× at 2048-bit+.",
+    "results_match": true,
+    "match_note": "All rsa_dec == rsa_dec_crt \u2705"
+  }
+}

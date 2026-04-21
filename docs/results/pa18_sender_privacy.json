@@ -1,0 +1,13 @@
+{
+  "group": {
+    "p": 23,
+    "q": 11,
+    "g": 4
+  },
+  "receiver_choice": 1,
+  "pk_b_honest_with_trapdoor": 9,
+  "pk_1_minus_b_random": 3,
+  "brute_force_dlp_pk0": 4,
+  "brute_force_dlp_pk1": 8,
+  "conclusion": "A sender seeing (pk0, pk1) cannot tell which is real vs random without solving DDH. Brute-force success on tiny parameters is illustrative only."
+}

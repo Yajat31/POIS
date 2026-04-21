@@ -61,7 +61,7 @@ def Dec(sk: ElGamalPrivateKey, c1: int, c2: int) -> int:
 
 
 def enc_bytes(pk: ElGamalPublicKey, m: bytes) -> tuple[int, int]:
-    """Encrypt bytes by treating m as integer mod p."""
+    """Encrypt bytes by treating m as integer mod p (works for short messages)."""
     from src.common.bytes_utils import bytes_to_int
     m_int = bytes_to_int(m) % pk.params.p or 1
     return Enc(pk, m_int)
@@ -72,6 +72,49 @@ def dec_bytes(sk: ElGamalPrivateKey, c1: int, c2: int) -> bytes:
     from src.common.bytes_utils import int_to_bytes
     m_int = Dec(sk, c1, c2)
     return int_to_bytes(m_int)
+
+
+def enc_blob(pk: ElGamalPublicKey, m: bytes) -> tuple[int, bytes]:
+    """KEM-style blob encryption: ephemeral DH mask key XOR'd with message.
+
+    c1 = g^r mod p   (ephemeral key)
+    c2 = m XOR KDF(pk.y^r mod p)  (XOR-encrypted blob of any length)
+
+    This preserves the full blob without modular reduction.
+    """
+    from src.common.bytes_utils import xor_bytes
+    group = pk.params
+    r = random_element_zq(group.q)
+    c1 = modexp(group.g, r, group.p)
+    shared = modexp(pk.y, r, group.p)
+    # KDF: expand shared secret to len(m) bytes using repeated hashing
+    mask = _expand_mask(shared, len(m))
+    c2 = xor_bytes(m, mask)
+    return c1, c2
+
+
+def dec_blob(sk: ElGamalPrivateKey, c1: int, c2: bytes) -> bytes:
+    """KEM-style blob decryption matching enc_blob."""
+    from src.common.bytes_utils import xor_bytes
+    group = sk.params
+    shared = modexp(c1, sk.x, group.p)
+    mask = _expand_mask(shared, len(c2))
+    return xor_bytes(c2, mask)
+
+
+def _expand_mask(shared: int, length: int) -> bytes:
+    """Expand shared secret to 'length' bytes (counter-mode KDF, no hashlib)."""
+    import struct
+    from src.foundations.aes_impl import aes_encrypt_block
+    from src.common.bytes_utils import int_to_bytes
+    key = (int_to_bytes(shared) + b"\x00" * 16)[:16]
+    out = b""
+    ctr = 0
+    while len(out) < length:
+        block = aes_encrypt_block(key, struct.pack(">QQ", ctr, 0))
+        out += block
+        ctr += 1
+    return out[:length]
 
 
 def malleability_attack_demo(pk: ElGamalPublicKey, sk: ElGamalPrivateKey, m: int) -> dict:
