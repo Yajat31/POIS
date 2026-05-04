@@ -147,33 +147,42 @@ def build_comparison_circuit(n: int) -> Circuit:
     Ripple-carry comparison: x > y iff there exists a position i where
     x_i=1, y_i=0, and all higher-order bits are equal.
     """
+    if n <= 0:
+        raise ValueError("build_comparison_circuit: n must be positive")
+
     n_wires = 2 * n
     gates = []
     wire = 2 * n
-    gt_wire = None  # running "x > y" indicator
+
+    gt_wire = wire; wire += 1
+    gates.append(Gate(GateType.CONST, [], gt_wire, const_val=0))
+    eq_wire = wire; wire += 1
+    gates.append(Gate(GateType.CONST, [], eq_wire, const_val=1))
 
     for i in range(n):
         xi, yi = i, n + i  # MSB at index 0
 
-        # x_i AND NOT(y_i): Alice has 1, Bob has 0 at position i
+        # Candidate greater-than at this bit, valid only while all prior bits matched.
         not_yi = wire; wire += 1
         gates.append(Gate(GateType.NOT, [yi], not_yi))
         xi_gt_yi = wire; wire += 1
         gates.append(Gate(GateType.AND, [xi, not_yi], xi_gt_yi))
 
-        if gt_wire is None:
-            gt_wire = xi_gt_yi
-        else:
-            # eq_so_far = NOT(XOR(prev_bits))... simplified: OR(prev_gt, xi_gt_yi AND eq_so_far)
-            # Simplified ripple: gt = prev_gt OR (xi_gt_yi AND NOT(prev_gt OR xi_lt_yi))
-            # For demo we use: gt = gt OR xi_gt_yi (approximate; exact needs more gates)
-            not_gt = wire; wire += 1
-            gates.append(Gate(GateType.NOT, [gt_wire], not_gt))
-            new_gt = wire; wire += 1
-            gates.append(Gate(GateType.AND, [xi_gt_yi, not_gt], new_gt))
-            or_out = wire; wire += 1
-            gates.append(Gate(GateType.XOR, [gt_wire, new_gt], or_out))  # OR via XOR+AND
-            gt_wire = or_out
+        candidate_gt = wire; wire += 1
+        gates.append(Gate(GateType.AND, [eq_wire, xi_gt_yi], candidate_gt))
+
+        # gt_wire and candidate_gt are mutually exclusive, so XOR implements OR here.
+        new_gt = wire; wire += 1
+        gates.append(Gate(GateType.XOR, [gt_wire, candidate_gt], new_gt))
+        gt_wire = new_gt
+
+        diff = wire; wire += 1
+        gates.append(Gate(GateType.XOR, [xi, yi], diff))
+        same = wire; wire += 1
+        gates.append(Gate(GateType.NOT, [diff], same))
+        new_eq = wire; wire += 1
+        gates.append(Gate(GateType.AND, [eq_wire, same], new_eq))
+        eq_wire = new_eq
 
     return Circuit(n_alice=n, n_bob=n, gates=gates, output_wires=[gt_wire], n_wires=wire)
 

@@ -249,3 +249,19 @@ class TestSecureGates:
         from src.foundations.dlp_group import DEMO_PARAMS
         result = truth_table_test(DEMO_PARAMS)
         assert result["all_correct"], "All gates should give correct outputs"
+
+
+class TestMPC:
+    def test_comparison_circuit_exhaustive_small_inputs(self):
+        from src.pa20_mpc.mpc import build_comparison_circuit, SecureEval
+        from src.foundations.dlp_group import DEMO_PARAMS
+
+        def bits(value, n):
+            return [(value >> (n - 1 - i)) & 1 for i in range(n)]
+
+        for n in [1, 2, 3]:
+            circuit = build_comparison_circuit(n)
+            for x in range(2 ** n):
+                for y in range(2 ** n):
+                    out, _ = SecureEval(circuit, bits(x, n), bits(y, n), DEMO_PARAMS)
+                    assert out[0] == int(x > y), f"comparison failed for n={n}, x={x}, y={y}"

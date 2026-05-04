@@ -120,7 +120,7 @@ function BuildPanel({ foundation, onHandle }) {
   );
 }
 
-function ReducePanel({ srcHandle, srcPrimitive, foundation }) {
+function ReducePanel({ srcHandle, srcPrimitive, onTargetChange }) {
   const [tgtPrimitive, setTgtPrimitive] = useState("MAC");
   const [queryHex, setQueryHex] = useState("0102030405060708090a0b0c0d0e0f10");
   const [direction, setDirection] = useState("forward");
@@ -150,13 +150,18 @@ function ReducePanel({ srcHandle, srcPrimitive, foundation }) {
     }
   }, [srcPrimitive, tgtPrimitive, queryHex, direction, srcHandle]);
 
+  const handleTargetChange = useCallback((target) => {
+    setTgtPrimitive(target);
+    onTargetChange?.(target);
+  }, [onTargetChange]);
+
   return (
     <div className="panel-card">
       <div className="panel-title">② Reduce — Source Primitive → Target</div>
       <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
         Using <strong style={{ color: "var(--accent2)" }}>{srcPrimitive}</strong> from Column 1 as black-box
       </div>
-      <PrimitiveSelect id="reduce-target" label="Target Primitive (B)" value={tgtPrimitive} onChange={setTgtPrimitive} />
+      <PrimitiveSelect id="reduce-target" label="Target Primitive (B)" value={tgtPrimitive} onChange={handleTargetChange} />
       <div className="select-wrapper">
         <label className="select-label">Direction</label>
         <select id="reduce-direction" className="styled-select" value={direction} onChange={(e) => setDirection(e.target.value)}>
@@ -306,7 +311,7 @@ export default function App() {
 
       <div className="main-columns">
         <BuildPanel foundation={foundation} onHandle={handleHandle} />
-        <ReducePanel srcHandle={srcHandle} srcPrimitive={srcPrimitive} foundation={foundation} />
+        <ReducePanel srcHandle={srcHandle} srcPrimitive={srcPrimitive} onTargetChange={setTgtPrimitive} />
       </div>
 
       <ProofSummaryPanel
