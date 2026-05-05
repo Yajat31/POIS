@@ -102,10 +102,13 @@ def build_foundation_to_primitive(req: BuildRequest) -> dict:
     if not info or not info.get("implemented"):
         return {"status": "stub", "message": f"Not implemented (PA#{info.get('pa','?')})", "handle": {}}
 
+    val = req.seed_or_key_hex.strip() or "00" * 16
+    if len(val) % 2 != 0:
+        val = "0" + val
     try:
-        kb = bytes.fromhex(req.seed_or_key_hex.strip() or "00" * 16)
+        kb = bytes.fromhex(val)
     except ValueError:
-        raise HTTPException(400, "seed_or_key_hex must be valid hex")
+        return {"error": "seed_or_key_hex must be valid hex", "status": "error"}
 
     steps, handle = [], {}
 
@@ -189,7 +192,7 @@ def build_foundation_to_primitive(req: BuildRequest) -> dict:
         steps.append({"step": "AES-128 PRP", "description": "AES-128 block cipher", "k_hex": k.hex(), "output_hex": ct.hex()})
         handle = {"type": "PRP", "k_hex": k.hex()}
     else:
-        raise HTTPException(400, f"Unknown foundation '{req.foundation}'. Use 'AES' or 'DLP'.")
+        return {"error": f"Unknown foundation '{req.foundation}'. Use 'AES' or 'DLP'.", "status": "error"}
 
     return {"status": "ok", "foundation": req.foundation,
             "source_primitive": req.source_primitive, "steps": steps, "handle": handle}
@@ -229,10 +232,13 @@ def reduce_primitive_to_target(req: ReduceRequest) -> dict:
                 "supported_sources": list(REDUCTION_GRAPH.keys()),
             }
 
+    val = req.query_hex.strip() or "00" * 16
+    if len(val) % 2 != 0:
+        val = "0" + val
     try:
-        query = bytes.fromhex(req.query_hex.strip() or "00" * 16)
+        query = bytes.fromhex(val)
     except ValueError:
-        raise HTTPException(400, "query_hex must be valid hex")
+        return {"error": "query_hex must be valid hex", "status": "error"}
 
     # Compute output using ONLY handle data — no direct AES/DLP imports here
     output_hex = _compute_reduction_output(src, tgt, handle, query)

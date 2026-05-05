@@ -200,6 +200,7 @@ function ReducePanel({ srcHandle, srcPrimitive, onTargetChange }) {
       {result && (
         result.status === "stub" ? <StubCard message={result.message} /> :
         result.status === "no_path" ? <StubCard message={result.message + " " + (result.hint || "")} /> :
+        result.status === "composed_path" ? <StubCard message={result.message + " " + (result.hint || "") + " " + (result.suggestion || "")} /> :
         result.status === "error" ? <StubCard message={result.message} /> :
         result.error ? <StubCard message={`Error: ${result.error}`} /> :
         <>
