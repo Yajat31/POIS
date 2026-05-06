@@ -147,11 +147,11 @@ export async function runBirthdayAttack({ n_bits, max_evaluations }) {
   return res.json();
 }
 
-export async function runHmacCompare({ message, extension }) {
+export async function runHmacCompare({ message, extension, hash_type = "dlp" }) {
   const res = await fetch(`${API_BASE}/pa10/hmac_compare`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, extension }),
+    body: JSON.stringify({ message, extension, hash_type }),
   });
   return res.json();
 }

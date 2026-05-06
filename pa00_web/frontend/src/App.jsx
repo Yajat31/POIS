@@ -355,6 +355,7 @@ function CpaGamePanel() {
 
   const winRate = stats.rounds ? stats.wins / stats.rounds : 0;
   const advantage = stats.rounds ? Math.abs(winRate - 0.5) : 0;
+  const roundsDone = stats.rounds >= 20;
 
   return (
     <section className="demo-panel">
@@ -405,6 +406,11 @@ function CpaGamePanel() {
           {lastGuess?.status === "ok" && (
             <div className={`result-banner ${lastGuess.correct ? "pass" : "fail"}`}>
               Guess {lastGuess.guess}; hidden b was {lastGuess.b}. {lastGuess.correct ? "Correct" : "Incorrect"}.
+            </div>
+          )}
+          {roundsDone && (
+            <div className={`result-banner ${advantage <= 0.1 ? "pass" : "fail"}`}>
+              20+ rounds completed — advantage {advantage.toFixed(3)} {advantage <= 0.1 ? "≤ 0.1 ✓ SECURE" : "> 0.1 ⚠ BROKEN"}
             </div>
           )}
         </>
@@ -792,6 +798,8 @@ function DlpHashPanel() {
   const [blockSize, setBlockSize] = useState(16);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [huntResult, setHuntResult] = useState(null);
+  const [huntLoading, setHuntLoading] = useState(false);
 
   const runDemo = useCallback(async () => {
     setLoading(true);
@@ -806,6 +814,19 @@ function DlpHashPanel() {
     const id = setTimeout(runDemo, 180);
     return () => clearTimeout(id);
   }, [runDemo]);
+
+  const runCollisionHunt = useCallback(async () => {
+    setHuntLoading(true);
+    try {
+      setHuntResult(await runBirthdayAttack({ n_bits: 16, max_evaluations: 100000 }));
+    } finally {
+      setHuntLoading(false);
+    }
+  }, []);
+
+  const huntAttack = huntResult?.attack;
+  const huntBound = 256; // 2^(16/2)
+  const huntProgress = huntAttack ? Math.min(1, huntAttack.evaluations / huntBound) : 0;
 
   return (
     <section className="demo-panel">
@@ -842,8 +863,69 @@ function DlpHashPanel() {
           </div>
         </>
       )}
+      <div className="panel-title subtle">Collision Hunt (16-bit truncated output)</div>
+      <button className="action-btn" onClick={runCollisionHunt} disabled={huntLoading}>
+        {huntLoading ? <span className="spinner" /> : "🔍 Collision Hunt"}
+      </button>
+      {(huntLoading || huntAttack) && (
+        <>
+          <div className="input-wrapper">
+            <label className="select-label">Progress toward 2^(n/2) = {huntBound} evaluations</label>
+            <div className="ratio-track">
+              <div className="ratio-fill" style={{ width: `${Math.round(Math.min(huntProgress, 1) * 100)}%` }} />
+            </div>
+          </div>
+          {huntAttack && (
+            <div className="metric-row">
+              <span className={`tag ${huntAttack.collision_found ? "tag-ok" : "tag-err"}`}>
+                {huntAttack.collision_found ? "Collision found!" : "No collision"}
+              </span>
+              <span className="tag tag-stub">{huntAttack.evaluations} evaluations</span>
+              <span className="tag tag-stub">ratio {huntAttack.ratio}</span>
+            </div>
+          )}
+          {huntAttack?.collision_found && (
+            <div className="block-grid">
+              <div className="block-card"><div className="step-title">x₁</div><div className="step-value">{huntAttack.x1}</div></div>
+              <div className="block-card"><div className="step-title">x₂</div><div className="step-value">{huntAttack.x2}</div></div>
+              <div className="block-card changed"><div className="step-title">Same hash</div><div className="step-value">{huntAttack.hash_value}</div></div>
+            </div>
+          )}
+        </>
+      )}
       {loading && !result && <span className="spinner" />}
     </section>
+  );
+}
+
+function BirthdayChart({ curve, bound, empirical }) {
+  if (!curve || curve.length < 2) return null;
+  const W = 480, H = 200, PAD = 40;
+  const maxK = curve[curve.length - 1].k || 1;
+  const xScale = (k) => PAD + (k / maxK) * (W - PAD * 2);
+  const yScale = (p) => H - PAD - p * (H - PAD * 2);
+  const line = curve.map((pt) => `${xScale(pt.k).toFixed(1)},${yScale(pt.p).toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 520, background: "#07111f", borderRadius: 8, border: "1px solid var(--border)" }}>
+      <polyline points={line} fill="none" stroke="#22d3ee" strokeWidth="2" />
+      {bound > 0 && (
+        <>
+          <line x1={xScale(bound)} y1={PAD / 2} x2={xScale(bound)} y2={H - PAD} stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4,3" />
+          <text x={xScale(bound) + 3} y={PAD - 2} fill="#f59e0b" fontSize="9" fontFamily="monospace">2^(n/2)={bound}</text>
+        </>
+      )}
+      {empirical > 0 && (
+        <>
+          <line x1={xScale(empirical)} y1={PAD / 2} x2={xScale(empirical)} y2={H - PAD} stroke="#ef4444" strokeWidth="2" />
+          <circle cx={xScale(empirical)} cy={yScale(1)} r="4" fill="#ef4444" />
+          <text x={xScale(empirical) + 3} y={H - PAD + 14} fill="#ef4444" fontSize="9" fontFamily="monospace">collision@{empirical}</text>
+        </>
+      )}
+      <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} stroke="#334155" strokeWidth="1" />
+      <line x1={PAD} y1={PAD / 2} x2={PAD} y2={H - PAD} stroke="#334155" strokeWidth="1" />
+      <text x={W / 2} y={H - 4} fill="#94a3b8" fontSize="9" textAnchor="middle" fontFamily="monospace">hashes computed (k)</text>
+      <text x={8} y={H / 2} fill="#94a3b8" fontSize="9" transform={`rotate(-90,8,${H / 2})`} fontFamily="monospace">P(collision)</text>
+    </svg>
   );
 }
 
@@ -875,6 +957,13 @@ function BirthdayAttackPanel() {
         <label className="select-label">Truncated output bits: {bits}</label>
         <input className="styled-range" type="range" min="4" max="20" value={bits} onChange={(e) => setBits(Number(e.target.value))} />
       </div>
+      {result?.birthday_curve && (
+        <BirthdayChart
+          curve={result.birthday_curve}
+          bound={result.birthday_bound || 0}
+          empirical={attack?.collision_found ? attack.evaluations : 0}
+        />
+      )}
       {attack && (
         <>
           <div className="metric-row">
@@ -911,17 +1000,18 @@ function BirthdayAttackPanel() {
 function HmacComparePanel() {
   const [message, setMessage] = useState("amount=100&to=bob");
   const [extension, setExtension] = useState("&admin=true");
+  const [hashType, setHashType] = useState("dlp");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const runDemo = useCallback(async () => {
     setLoading(true);
     try {
-      setResult(await runHmacCompare({ message, extension }));
+      setResult(await runHmacCompare({ message, extension, hash_type: hashType }));
     } finally {
       setLoading(false);
     }
-  }, [message, extension]);
+  }, [message, extension, hashType]);
 
   useEffect(() => {
     const id = setTimeout(runDemo, 180);
@@ -931,7 +1021,7 @@ function HmacComparePanel() {
   return (
     <section className="demo-panel">
       <div className="panel-title">PA#10 — Length Extension vs HMAC</div>
-      <div className="demo-grid">
+      <div className="demo-grid three">
         <div className="input-wrapper">
           <label className="select-label">Message</label>
           <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
@@ -940,10 +1030,17 @@ function HmacComparePanel() {
           <label className="select-label">Suffix</label>
           <input className="styled-input text-input" value={extension} onChange={(e) => setExtension(e.target.value)} />
         </div>
+        <div className="input-wrapper">
+          <label className="select-label">Hash Function</label>
+          <div className="segmented">
+            <button className={`segment ${hashType === "dlp" ? "active" : ""}`} onClick={() => setHashType("dlp")}>DLP Hash</button>
+            <button className={`segment ${hashType === "sha256" ? "active" : ""}`} onClick={() => setHashType("sha256")}>SHA-256</button>
+          </div>
+        </div>
       </div>
       {result?.status === "ok" && (
         <>
-          <div className="info-card">Extended message: {result.extended_message_display}</div>
+          <div className="info-card">Hash: {result.hash_label || hashType} — Extended message: {result.extended_message_display}</div>
           <div className="compare-grid">
             <div className={`block-card ${result.naive.attack_succeeds ? "changed" : ""}`}>
               <div className="step-title">Naive H(k || m)</div>
@@ -952,7 +1049,7 @@ function HmacComparePanel() {
               <div className="step-value">actual {result.naive.actual_extended_tag_hex}</div>
             </div>
             <div className={`block-card ${result.hmac.attack_succeeds ? "changed" : ""}`}>
-              <div className="step-title">HMAC</div>
+              <div className="step-title">HMAC ({result.hash_label || hashType})</div>
               <div className="step-desc">attack succeeds: {String(result.hmac.attack_succeeds)}</div>
               <div className="step-value">attempt {result.hmac.forged_attempt_hex}</div>
               <div className="step-value">real {result.hmac.real_extended_tag_hex}</div>
@@ -1275,11 +1372,18 @@ function ElGamalPanel() {
   const [message, setMessage] = useState(5);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [successCount, setSuccessCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
 
   const runDemo = useCallback(async () => {
     setLoading(true);
     try {
-      setResult(await runElGamal({ message: Number(message) }));
+      const r = await runElGamal({ message: Number(message) });
+      setResult(r);
+      if (r?.status === "ok") {
+        setTotalCount((c) => c + 1);
+        if (r.malleability_succeeds) setSuccessCount((c) => c + 1);
+      }
     } finally {
       setLoading(false);
     }
@@ -1303,6 +1407,7 @@ function ElGamalPanel() {
             <span className="tag tag-stub">p {result.group.p}</span>
             <span className="tag tag-stub">g {result.group.g}</span>
             <span className="tag tag-ok">Dec(C) {result.decrypted}</span>
+            <span className="tag tag-ok">success {successCount}/{totalCount} ({totalCount ? Math.round(100 * successCount / totalCount) : 0}%)</span>
           </div>
           <div className="compare-grid">
             <div className="block-card">
@@ -1393,9 +1498,11 @@ function OtPanel() {
   const [choice, setChoice] = useState(0);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [showCheat, setShowCheat] = useState(false);
 
   const runDemo = useCallback(async () => {
     setLoading(true);
+    setShowCheat(false);
     try {
       setResult(await runOtDemo({ m0, m1, choice }));
     } finally {
@@ -1438,8 +1545,16 @@ function OtPanel() {
             ))}
           </div>
           <div className={`result-banner ${result.privacy_holds ? "pass" : "fail"}`}>
-            Received {result.received_label} = {result.received}; other decrypt attempt = {result.other_attempt}
+            Received {result.received_label} = {result.received}
           </div>
+          <button className="action-btn" onClick={() => setShowCheat(true)} disabled={showCheat}>
+            {showCheat ? "🔓 Cheat revealed" : "🔒 Cheat Attempt — try decrypt C₁₋₀"}
+          </button>
+          {showCheat && (
+            <div className={`result-banner ${result.privacy_holds ? "pass" : "fail"}`}>
+              Other decrypt attempt = {result.other_attempt} (expected {result.other_expected}) — {result.privacy_holds ? "privacy holds ✓" : "privacy broken ✗"}
+            </div>
+          )}
           <StepList steps={result.steps} />
         </>
       )}
@@ -1453,6 +1568,8 @@ function SecureAndPanel() {
   const [b, setB] = useState(1);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [allResults, setAllResults] = useState(null);
+  const [allLoading, setAllLoading] = useState(false);
 
   const runDemo = useCallback(async () => {
     setLoading(true);
@@ -1467,6 +1584,20 @@ function SecureAndPanel() {
     const id = setTimeout(runDemo, 180);
     return () => clearTimeout(id);
   }, [runDemo]);
+
+  const runAll = useCallback(async () => {
+    setAllLoading(true);
+    try {
+      const results = [];
+      for (const [ai, bi] of [[0,0],[0,1],[1,0],[1,1]]) {
+        const r = await runSecureAnd({ a: ai, b: bi });
+        results.push({ a: ai, b: bi, result: r.and_result, correct: r.correct });
+      }
+      setAllResults(results);
+    } finally {
+      setAllLoading(false);
+    }
+  }, []);
 
   return (
     <section className="demo-panel">
@@ -1494,6 +1625,15 @@ function SecureAndPanel() {
             ))}
           </div>
         </>
+      )}
+      <button className="action-btn" onClick={runAll} disabled={allLoading}>
+        {allLoading ? <span className="spinner" /> : "☑ Run All 4 Combinations"}
+      </button>
+      {allResults && (
+        <div className={`result-banner ${allResults.every((r) => r.correct) ? "pass" : "fail"}`}>
+          {allResults.map((r) => `${r.a}∧${r.b}=${r.result}${r.correct ? "✓" : "✗"}`).join("  |  ")}
+          {allResults.every((r) => r.correct) ? " — All correct!" : " — Some failures"}
+        </div>
       )}
       {loading && !result && <span className="spinner" />}
     </section>

@@ -85,6 +85,9 @@ REDUCTIONS: dict[tuple, dict] = {
     ("MAC","HMAC"): {"dir":"backward", "pa":"PA#10","theorem":"EUF-CMA MAC can be HMAC-structured","construction":"Nested MAC: outer_MAC(k,inner_MAC(k',m))"},
     ("CRHF","MAC"): {"dir":"forward",  "pa":"PA#10","theorem":"CRHF→HMAC→MAC chain",              "construction":"DLPHash(CRHF)→HMAC→EUF-CMA MAC"},
     ("MAC","CRHF"): {"dir":"backward", "pa":"PA#7/8","theorem":"PRF-MAC as MD compression=CRHF",  "construction":"Use MAC_k as compression function in Merkle-Damgård"},
+    ("CPA","PRF"):  {"dir":"backward", "pa":"PA#3", "theorem":"CPA⟹PRF: Extract PRF from CPA",    "construction":"Extract the pseudorandom pad from CPA ciphertext"},
+    ("CCA","CPA"):  {"dir":"backward", "pa":"PA#6", "theorem":"CCA⟹CPA (CCA is stronger notion)", "construction":"Every CCA scheme is trivially CPA secure"},
+    ("CCA","MAC"):  {"dir":"backward", "pa":"PA#6", "theorem":"CCA(Encrypt-then-MAC)⟹MAC",        "construction":"Extract MAC tag from CCA ciphertext"},
 }
 
 # ─── Models ───────────────────────────────────────────────────
@@ -170,6 +173,7 @@ class BirthdayDemoRequest(BaseModel):
 class HMACCompareRequest(BaseModel):
     message: str = "amount=100&to=bob"
     extension: str = "&admin=true"
+    hash_type: str = "dlp"
 
 class DHDemoRequest(BaseModel):
     a: int = 0
@@ -921,11 +925,24 @@ def pa09_birthday(req: BirthdayDemoRequest) -> dict:
         return int.from_bytes(dlp.hash(x), "big")
 
     result = birthday_attack(hash_fn, n_bits, max_evaluations=max_evaluations)
+
+    # Compute theoretical birthday curve data points for the chart overlay
+    import math
+    N = 2 ** n_bits
+    birthday_bound = int(math.ceil(math.sqrt(N)))
+    curve_points = []
+    num_points = min(birthday_bound * 3, 500)
+    for i in range(0, num_points + 1, max(1, num_points // 100)):
+        prob = 1.0 - math.exp(-i * (i - 1) / (2.0 * N)) if i > 0 else 0.0
+        curve_points.append({"k": i, "p": round(min(prob, 1.0), 4)})
+
     return {
         "status": "ok",
         "n_bits": n_bits,
         "max_evaluations": max_evaluations,
         "attack": result,
+        "birthday_curve": curve_points,
+        "birthday_bound": birthday_bound,
         "cost_context": compute_md5_sha1_cost(),
     }
 
@@ -942,6 +959,7 @@ def pa10_hmac_compare(req: HMACCompareRequest) -> dict:
     key = b"hidden-demo-key!!"[:16]
     message = (req.message or "").encode()
     extension = (req.extension or "").encode()
+    hash_type = (req.hash_type or "dlp").lower()
 
     naive_tag = naive_mac(key, message)
     glue_padding = iso7816_pad(key + message, 16)[len(key + message):]
@@ -951,8 +969,21 @@ def pa10_hmac_compare(req: HMACCompareRequest) -> dict:
     extended_message = message + glue_padding + extension
     actual_naive = naive_mac(key, extended_message)
 
-    params = gen_dlp_hash_params(MEDIUM_DEMO_PARAMS)
-    hash_fn = DLPHash(params, block_size=16)
+    if hash_type == "sha256":
+        # Simple SHA-256-like placeholder using Python's hashlib
+        # (only for comparison demo — not used in the crypto chain)
+        import hashlib
+        class _SHA256Wrapper:
+            block_size = 64
+            def hash(self, data: bytes) -> bytes:
+                return hashlib.sha256(data).digest()[:16]
+        hash_fn = _SHA256Wrapper()
+        hash_label = "SHA-256 (placeholder)"
+    else:
+        params = gen_dlp_hash_params(MEDIUM_DEMO_PARAMS)
+        hash_fn = DLPHash(params, block_size=16)
+        hash_label = "DLP Hash (PA#8)"
+
     hmac_tag = HMAC(key, message, hash_fn)
     forged_hmac_attempt = hash_fn.hash(hmac_tag + extension)
     real_hmac_extended = HMAC(key, message + extension, hash_fn)
@@ -960,6 +991,8 @@ def pa10_hmac_compare(req: HMACCompareRequest) -> dict:
         "status": "ok",
         "message_text": _safe_text(message),
         "extension_text": _safe_text(extension),
+        "hash_type": hash_type,
+        "hash_label": hash_label,
         "extended_message_display": f"{_safe_text(message)} || pad({glue_padding.hex()}) || {_safe_text(extension)}",
         "naive": {
             "original_tag_hex": naive_tag.hex(),
