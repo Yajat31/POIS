@@ -48,10 +48,10 @@ REDUCTION_GRAPH: dict[str, list[str]] = {
     "OWF":  ["PRG", "OWP"],
     "OWP":  ["OWF", "PRG", "PRF"],
     "PRG":  ["OWF", "PRF", "OWP"],
-    "PRF":  ["PRG", "PRP", "MAC", "OWP"],
+    "PRF":  ["PRG", "PRP", "MAC", "OWP", "CPA"],
     "PRP":  ["PRF", "MAC"],
     "MAC":  ["PRF", "HMAC", "CRHF"],
-    "CPA":  ["PRF"],
+    "CPA":  ["PRF", "CCA"],
     "CCA":  ["MAC", "CPA"],
     "CRHF": ["HMAC", "MAC"],
     "HMAC": ["CRHF", "MAC"],
@@ -72,6 +72,9 @@ REDUCTIONS: dict[tuple, dict] = {
     ("PRP","PRF"):  {"dir":"backward", "pa":"PA#2", "theorem":"Switching lemma: PRP≈PRF for q≪2^n","construction":"For q queries, |Pr[A^PRP]-Pr[A^PRF]|≤q²/2^n"},
     ("PRF","MAC"):  {"dir":"forward",  "pa":"PA#5", "theorem":"PRF⟹MAC: Mac(k,m)=F_k(m)",         "construction":"MAC forgery→PRF distinguisher (contrapositive)"},
     ("MAC","PRF"):  {"dir":"backward", "pa":"PA#5", "theorem":"PRF-MAC outputs indist. from random","construction":"MAC distinguisher→PRF distinguisher"},
+    ("PRF","OWP"):  {"dir":"backward", "pa":"PA#1/2","theorem":"PRF⟹PRP⟹OWP",                    "construction":"Use PRF→PRP via Feistel/switching, then fix an input to obtain a one-way permutation candidate"},
+    ("PRF","CPA"):  {"dir":"forward",  "pa":"PA#3", "theorem":"PRF⟹CPA-secure encryption",        "construction":"Enc_k(m)=(r,F_k(r)⊕m) with fresh r"},
+    ("CPA","CCA"):  {"dir":"forward",  "pa":"PA#6", "theorem":"CPA + MAC ⟹ CCA via Encrypt-then-MAC","construction":"Encrypt first, then authenticate ciphertext before decrypting"},
     ("PRP","MAC"):  {"dir":"forward",  "pa":"PA#4/5","theorem":"PRP⟹PRF (switching)⟹MAC",        "construction":"AES as PRF, then PRF-MAC construction"},
     ("CRHF","HMAC"):{"dir":"forward",  "pa":"PA#10","theorem":"CRHF⟹HMAC is EUF-CMA secure",      "construction":"HMAC(k,m)=H((k⊕opad)‖H((k⊕ipad)‖m))"},
     ("HMAC","CRHF"):{"dir":"backward", "pa":"PA#10","theorem":"HMAC_k(·) as MD compression=CRHF", "construction":"Fix key k; use HMAC_k as compression in Merkle-Damgård"},
@@ -94,6 +97,87 @@ class ReduceRequest(BaseModel):
     direction: str = "forward"
     source_instance_handle: dict = {}
 
+class PRGViewerRequest(BaseModel):
+    seed_hex: str = ""
+    length_bytes: int = 32
+    run_tests: bool = False
+
+
+def _normalise_hex(value: str, fallback: str = "") -> str:
+    val = (value or "").strip() or fallback
+    if val.startswith("0x"):
+        val = val[2:]
+    if len(val) % 2 != 0:
+        val = "0" + val
+    return val
+
+
+def _foundation_root_from_dlp(kb: bytes) -> tuple[str, list[dict], dict]:
+    from src.foundations.dlp_group import DEMO_PARAMS
+    from src.pa01_owf_prg.owf import OWF
+
+    owf = OWF(DEMO_PARAMS)
+    x = int.from_bytes(kb[:8], "big") % DEMO_PARAMS.q or 1
+    y = owf.evaluate(x)
+    steps = [
+        {
+            "step": "Foundation: DLP",
+            "description": "Start from the concrete DLP one-way function f(x)=g^x mod p.",
+            "p": DEMO_PARAMS.p,
+            "q": DEMO_PARAMS.q,
+            "g": DEMO_PARAMS.g,
+        },
+        {
+            "step": "Root primitive: OWF",
+            "description": "Evaluate the DLP OWF on the input-derived exponent.",
+            "x": x,
+            "output_hex": hex(y),
+        },
+    ]
+    handle = {"type": "OWF", "x": x, "y": y, "q": DEMO_PARAMS.q, "p": DEMO_PARAMS.p, "g": DEMO_PARAMS.g}
+    return "OWF", steps, handle
+
+
+def _foundation_root_from_aes(kb: bytes) -> tuple[str, list[dict], dict]:
+    from src.foundations.aes_impl import aes_encrypt_block
+
+    k = (kb + b"\x00" * 16)[:16]
+    zero = b"\x00" * 16
+    one = b"\x00" * 15 + b"\x01"
+    ct0 = aes_encrypt_block(k, zero)
+    ct1 = aes_encrypt_block(k, one)
+    steps = [
+        {
+            "step": "Foundation: AES-128",
+            "description": "Start from AES as the concrete PRP foundation.",
+            "k_hex": k.hex(),
+            "output_hex": ct0.hex(),
+        },
+        {
+            "step": "Root primitive: PRP",
+            "description": "AES_k is a pseudorandom permutation; Column 1 routes from this PRP to the requested source primitive.",
+            "x_hex": zero.hex(),
+            "AES_k(1)_hex": ct1.hex(),
+            "output_hex": ct0.hex(),
+        },
+    ]
+    return "PRP", steps, {"type": "PRP", "k_hex": k.hex(), "output_hex": ct0.hex()}
+
+
+def _aes_compression_prg(seed_bytes: bytes, length: int) -> tuple[bytes, list[int]]:
+    from src.foundations.aes_impl import aes_encrypt_block
+
+    state = (seed_bytes + b"\x00" * 16)[:16]
+    mask = int.from_bytes(b"\xaa" * 16, "big")
+    bits = []
+    for _ in range(length * 8):
+        state_int = int.from_bytes(state, "big")
+        bits.append(((state_int & mask).bit_count()) % 2)
+        encrypted_zero = aes_encrypt_block(state, b"\x00" * 16)
+        state = bytes(a ^ b for a, b in zip(encrypted_zero, state))
+    output = int("".join(str(bit) for bit in bits), 2).to_bytes(length, "big")
+    return output, bits
+
 # ─── Column 1: Foundation → Source Primitive ─────────────────
 @app.post("/build_foundation_to_primitive")
 def build_foundation_to_primitive(req: BuildRequest) -> dict:
@@ -102,100 +186,81 @@ def build_foundation_to_primitive(req: BuildRequest) -> dict:
     if not info or not info.get("implemented"):
         return {"status": "stub", "message": f"Not implemented (PA#{info.get('pa','?')})", "handle": {}}
 
-    val = req.seed_or_key_hex.strip() or "00" * 16
-    if len(val) % 2 != 0:
-        val = "0" + val
+    val = _normalise_hex(req.seed_or_key_hex, "00" * 16)
     try:
         kb = bytes.fromhex(val)
     except ValueError:
         return {"error": "seed_or_key_hex must be valid hex", "status": "error"}
 
-    steps, handle = [], {}
-
     if req.foundation == "DLP":
-        from src.foundations.dlp_group import DEMO_PARAMS
-        steps.append({"step": "Foundation Setup", "description": "DLP safe-prime group (p,q,g)",
-                       "p": DEMO_PARAMS.p, "q": DEMO_PARAMS.q, "g": DEMO_PARAMS.g})
-
-        if req.source_primitive == "OWF":
-            from src.pa01_owf_prg.owf import OWF
-            owf = OWF(DEMO_PARAMS)
-            x = int.from_bytes(kb[:4], "big") % DEMO_PARAMS.q or 1
-            y = owf.evaluate(x)
-            steps.append({"step": "OWF", "description": "f(x)=g^x mod p", "x": x, "output_hex": hex(y)})
-            handle = {"type": "OWF", "x": x, "y": y, "q": DEMO_PARAMS.q, "p": DEMO_PARAMS.p, "g": DEMO_PARAMS.g}
-
-        elif req.source_primitive == "OWP":
-            from src.pa01_owf_prg.owp import OWP_DLP
-            owp = OWP_DLP(DEMO_PARAMS)
-            x = int.from_bytes(kb[:4], "big") % DEMO_PARAMS.q or 1
-            y = owp.evaluate(x)
-            steps.append({"step": "OWP", "description": "f(x)=g^x mod p (permutation on ⟨g⟩)", "x": x, "output_hex": hex(y)})
-            handle = {"type": "OWP", "x": x, "y": y, "q": DEMO_PARAMS.q, "p": DEMO_PARAMS.p, "g": DEMO_PARAMS.g}
-
-        elif req.source_primitive == "PRG":
-            from src.pa01_owf_prg.owf import OWF, PRG
-            owf = OWF(DEMO_PARAMS)
-            prg = PRG(owf)
-            seed = int.from_bytes(kb[:4], "big") % DEMO_PARAMS.q or 1
-            prg.seed(seed)
-            bits = prg.next_bits(32)
-            out_hex = prg.expand(seed, 4).hex()
-            steps.append({"step": "PRG", "description": "G(s) via GL hard-core bits",
-                           "seed": seed, "bits_preview": "".join(str(b) for b in bits[:16])+"...", "output_hex": out_hex})
-            handle = {"type": "PRG", "seed": seed, "output_hex": out_hex,
-                      "q": DEMO_PARAMS.q, "p": DEMO_PARAMS.p, "g": DEMO_PARAMS.g}
-
-        elif req.source_primitive in ("PRF", "PRP"):
-            from src.pa02_prf.ggm_prf import PRFFromAES
-            prf = PRFFromAES()
-            k = (kb + b"\x00" * 16)[:16]
-            x = (kb + b"\x00" * 32)[16:32]
-            y = prf.F(k, x)
-            steps.append({"step": req.source_primitive, "description": "F_k(x)=AES_k(x)",
-                           "k_hex": k.hex(), "x_hex": x.hex(), "output_hex": y.hex()})
-            handle = {"type": req.source_primitive, "k_hex": k.hex()}
-
-        elif req.source_primitive == "MAC":
-            from src.pa05_mac.mac import MacCBC
-            mac = MacCBC()
-            k = (kb + b"\x00" * 16)[:16]
-            m = b"test message"
-            t = mac.Mac(k, m)
-            steps.append({"step": "MAC", "description": "CBC-MAC tag", "k_hex": k.hex(), "output_hex": t.hex()})
-            handle = {"type": "MAC", "k_hex": k.hex()}
-
-        elif req.source_primitive == "CRHF":
-            from src.pa08_dlp_hash.dlp_hash import DLPHash, gen_dlp_hash_params
-            params = gen_dlp_hash_params(DEMO_PARAMS)
-            h = DLPHash(params, block_size=16)
-            digest = h.hash(kb)
-            steps.append({"step": "CRHF", "description": "DLP Merkle-Damgård hash", "output_hex": digest.hex()})
-            elem_bytes = (DEMO_PARAMS.p.bit_length() + 7) // 8
-            handle = {"type": "CRHF", "digest_hex": digest.hex(), "elem_bytes": elem_bytes,
-                      "p": DEMO_PARAMS.p, "q": DEMO_PARAMS.q, "g": DEMO_PARAMS.g}
-
-        elif req.source_primitive == "HMAC":
-            from src.pa10_hmac_eth.hmac_eth import HMAC
-            from src.pa08_dlp_hash.dlp_hash import DLPHash, gen_dlp_hash_params
-            params = gen_dlp_hash_params(DEMO_PARAMS)
-            hash_fn = DLPHash(params, block_size=16)
-            k = (kb + b"\x00" * 16)[:16]
-            tag = HMAC(k, kb, hash_fn)
-            steps.append({"step": "HMAC", "description": "HMAC using PA#8 DLP hash", "k_hex": k.hex(), "output_hex": tag.hex()})
-            handle = {"type": "HMAC", "k_hex": k.hex()}
-
+        root_type, steps, handle = _foundation_root_from_dlp(kb)
     elif req.foundation == "AES":
-        from src.foundations.aes_impl import aes_encrypt_block
-        k = (kb + b"\x00" * 16)[:16]
-        ct = aes_encrypt_block(k, b"\x00" * 16)
-        steps.append({"step": "AES-128 PRP", "description": "AES-128 block cipher", "k_hex": k.hex(), "output_hex": ct.hex()})
-        handle = {"type": "PRP", "k_hex": k.hex()}
+        root_type, steps, handle = _foundation_root_from_aes(kb)
     else:
         return {"error": f"Unknown foundation '{req.foundation}'. Use 'AES' or 'DLP'.", "status": "error"}
 
+    path = _bfs(root_type, req.source_primitive)
+    if not path:
+        return {
+            "status": "no_path",
+            "message": f"No build path from {req.foundation} ({root_type}) to {req.source_primitive}.",
+            "steps": steps,
+            "handle": handle,
+        }
+
+    current_handle = handle
+    for hop_index, (hop_src, hop_tgt) in enumerate(zip(path, path[1:]), start=1):
+        hop = _compute_reduction_hop(hop_index, hop_src, hop_tgt, current_handle, kb)
+        steps.extend(hop["steps"])
+        current_handle = hop["handle"]
+
     return {"status": "ok", "foundation": req.foundation,
-            "source_primitive": req.source_primitive, "steps": steps, "handle": handle}
+            "source_primitive": req.source_primitive, "root_primitive": root_type,
+            "build_path": path, "hop_count": len(path) - 1,
+            "steps": steps, "handle": current_handle}
+
+
+@app.post("/pa01/prg_viewer")
+def pa01_prg_viewer(req: PRGViewerRequest) -> dict:
+    """PA#1 interactive PRG viewer: seed, expand, and optionally run NIST subset tests."""
+    val = _normalise_hex(req.seed_hex, "00" * 8)
+    try:
+        seed_bytes = bytes.fromhex(val)
+    except ValueError:
+        return {"status": "error", "message": "seed_hex must be valid hex"}
+
+    length = max(8, min(int(req.length_bytes or 32), 256))
+    from src.pa01_owf_prg.owf import run_statistical_tests
+
+    seed = int.from_bytes((seed_bytes + b"\x00" * 16)[:16], "big")
+    output, bits = _aes_compression_prg(seed_bytes, length)
+    ones = sum(bits)
+    zeros = len(bits) - ones
+    tests = run_statistical_tests(bits) if req.run_tests else []
+    return {
+        "status": "ok",
+        "seed": seed,
+        "seed_hex": seed_bytes.hex(),
+        "length_bytes": length,
+        "output_hex": output.hex(),
+        "bit_count": len(bits),
+        "ones": ones,
+        "zeros": zeros,
+        "one_ratio": round(ones / len(bits), 4) if bits else 0,
+        "tests": tests,
+        "steps": [
+            {
+                "step": "Seed",
+                "description": "Pad or truncate the hex seed to 128 bits for the AES-compression OWF.",
+                "output_hex": hex(seed),
+            },
+            {
+                "step": "HILL / GL expansion",
+                "description": "Iterate f(s)=AES_s(0^128) xor s and emit Goldreich-Levin hard-core bits.",
+                "output_hex": output.hex(),
+            },
+        ],
+    }
 
 
 # ─── Column 2: Source → Target (BLACK-BOX — handle only) ─────
@@ -316,6 +381,19 @@ def _handle_key_bytes(handle: dict, query: bytes) -> bytes:
     return (query + b"\x00" * 16)[:16]
 
 
+def _int_from_handle_value(value, default: int = 0) -> int:
+    if value is None:
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value, 16) if value.startswith("0x") else int(value, 16)
+        except ValueError:
+            return default
+    return default
+
+
 def _derive_handle_for_target(tgt: str, previous: dict, output_hex: str, query: bytes) -> dict:
     next_handle = dict(previous or {})
     next_handle["type"] = tgt
@@ -329,7 +407,7 @@ def _derive_handle_for_target(tgt: str, previous: dict, output_hex: str, query: 
         seed_bytes = _hex_to_bytes(output_hex, 4)
         next_handle["seed"] = int.from_bytes(seed_bytes[:4], "big") % q or 1
         next_handle["output_hex"] = output_hex
-    elif tgt in ("PRF", "PRP", "MAC", "HMAC"):
+    elif tgt in ("PRF", "PRP", "MAC", "HMAC", "CPA", "CCA"):
         next_handle["k_hex"] = _handle_key_bytes(previous, query).hex()
         next_handle["output_hex"] = output_hex
     elif tgt == "CRHF":
@@ -355,7 +433,7 @@ def _compute_reduction_output(src: str, tgt: str, handle: dict, query: bytes) ->
             return PRGFromPRF().expand(k, 16).hex()
 
         # PRF / PRP / MAC-style outputs.
-        if tgt in ("PRF", "PRP", "MAC") and (
+        if tgt in ("PRF", "PRP", "MAC", "CPA", "CCA") and (
             "k_hex" in handle or "output_hex" in handle or "digest_hex" in handle or "seed" in handle
         ):
             from src.pa02_prf.ggm_prf import PRFFromAES
@@ -369,6 +447,16 @@ def _compute_reduction_output(src: str, tgt: str, handle: dict, query: bytes) ->
             prg = PRG()
             prg.seed(handle["seed"])
             return prg.next_bytes(8).hex()
+
+        if tgt == "PRG":
+            from src.foundations.dlp_group import DEMO_PARAMS
+            from src.pa01_owf_prg.owf import OWF, PRG
+            seed = _int_from_handle_value(handle.get("x") or handle.get("y"))
+            if not seed:
+                seed = int.from_bytes(_handle_key_bytes(handle, query)[:8], "big")
+            seed = seed % int(handle.get("q", DEMO_PARAMS.q)) or 1
+            prg = PRG(OWF(DEMO_PARAMS))
+            return prg.expand(seed, 8).hex()
 
         # HMAC based output
         if tgt == "HMAC" and ("k_hex" in handle or "digest_hex" in handle or "output_hex" in handle):
@@ -392,6 +480,14 @@ def _compute_reduction_output(src: str, tgt: str, handle: dict, query: bytes) ->
             g, p = handle["g"], handle["p"]
             x = int.from_bytes(query[:4], "big") % handle.get("q", p - 1) or 1
             return hex(modexp(g, x, p))
+
+        if tgt in ("OWF", "OWP"):
+            seed = int(handle.get("seed") or 0)
+            if not seed:
+                seed = int.from_bytes(_handle_key_bytes(handle, query)[:8], "big")
+            from src.pa01_owf_prg.owf import PRG
+            prg = PRG()
+            return prg.expand(seed or 1, 8).hex()
 
         return "<reduction computed — check theorem for formula>"
     except Exception as e:
@@ -473,4 +569,5 @@ def get_clique_reductions() -> dict:
 def root():
     return {"service": "POIS Minicrypt Clique Explorer v2", "primitives": list(PRIMITIVES.keys()),
             "endpoints": ["/build_foundation_to_primitive", "/reduce_primitive_to_target",
-                          "/reduction_path", "/proof_summary", "/clique_reductions"]}
+                          "/pa01/prg_viewer", "/reduction_path", "/proof_summary",
+                          "/clique_reductions"]}

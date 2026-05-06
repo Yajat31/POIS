@@ -1,9 +1,10 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   buildFoundationToPrimitive,
   reducePrimitiveToTarget,
   getReductionPath,
   getProofSummary,
+  runPrgViewer,
 } from "./api/client.js";
 
 const FOUNDATIONS = ["DLP", "AES"];
@@ -111,12 +112,107 @@ function BuildPanel({ foundation, onHandle }) {
         result.error ? <StubCard message={`Error: ${result.error}`} /> :
         <>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            <span className="tag tag-ok">✓ {foundation} → {srcPrimitive}</span>
+            <span className="tag tag-ok">✓ {result.build_path?.join(" → ") || `${foundation} → ${srcPrimitive}`}</span>
+            {result.hop_count > 0 && <span className="tag tag-stub">{result.hop_count} hops</span>}
           </div>
           <StepList steps={result.steps} />
         </>
       )}
     </div>
+  );
+}
+
+function PrgViewerPanel() {
+  const [seedHex, setSeedHex] = useState("deadbeef1234abcd");
+  const [lengthBytes, setLengthBytes] = useState(32);
+  const [runTests, setRunTests] = useState(false);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchPrg = useCallback(async (withTests = false) => {
+    setLoading(true);
+    try {
+      const r = await runPrgViewer({ seed_hex: seedHex, length_bytes: lengthBytes, run_tests: withTests });
+      setResult(r);
+      setRunTests(withTests);
+    } catch (e) {
+      setResult({ status: "error", message: String(e) });
+    } finally {
+      setLoading(false);
+    }
+  }, [seedHex, lengthBytes]);
+
+  useEffect(() => {
+    const id = setTimeout(() => {
+      fetchPrg(false);
+    }, 180);
+    return () => clearTimeout(id);
+  }, [seedHex, lengthBytes, fetchPrg]);
+
+  const ratio = result?.one_ratio ?? 0;
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#1 — Live PRG Output Viewer</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Seed (hex)</label>
+          <input
+            id="pa01-seed"
+            className="styled-input"
+            value={seedHex}
+            onChange={(e) => setSeedHex(e.target.value)}
+          />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Output Length: {lengthBytes} bytes</label>
+          <input
+            id="pa01-length"
+            className="styled-range"
+            type="range"
+            min="8"
+            max="256"
+            step="8"
+            value={lengthBytes}
+            onChange={(e) => setLengthBytes(Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      <div className="prg-output-box">
+        {loading && !result ? <span className="spinner" /> : result?.output_hex || "Waiting for output..."}
+      </div>
+
+      {result?.status === "error" && <StubCard message={result.message} />}
+      {result?.status === "ok" && (
+        <>
+          <div className="metric-row">
+            <span className="tag tag-ok">seed integer: {result.seed}</span>
+            <span className="tag tag-stub">{result.bit_count} bits</span>
+            <span className="tag tag-stub">{result.ones} ones / {result.zeros} zeros</span>
+          </div>
+          <div className="ratio-track">
+            <div className="ratio-fill" style={{ width: `${Math.round(ratio * 100)}%` }} />
+          </div>
+          <button className="action-btn" onClick={() => fetchPrg(true)} disabled={loading}>
+            {loading && runTests ? <span className="spinner" /> : "Randomness Test"}
+          </button>
+          {result.tests?.length > 0 && (
+            <div className="test-grid">
+              {result.tests.map((test, i) => (
+                <div key={i} className={`test-card ${test.pass ? "pass" : "fail"}`}>
+                  <div className="step-title">{test.test}</div>
+                  <div className="step-desc">{test.pass ? "Pass" : "Fail"}</div>
+                  {"p_value" in test && <div className="step-value">p = {test.p_value}</div>}
+                  {"p1" in test && <div className="step-value">p1 = {test.p1}, p2 = {test.p2}</div>}
+                  {test.note && <div className="step-desc">{test.note}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -323,6 +419,8 @@ export default function App() {
         <BuildPanel foundation={foundation} onHandle={handleHandle} />
         <ReducePanel srcHandle={srcHandle} srcPrimitive={srcPrimitive} onTargetChange={setTgtPrimitive} />
       </div>
+
+      <PrgViewerPanel />
 
       <ProofSummaryPanel
         srcPrimitive={srcPrimitive}

@@ -38,3 +38,12 @@ export async function getProofSummary(source_type, target_type, direction = "for
   );
   return res.json();
 }
+
+export async function runPrgViewer({ seed_hex, length_bytes, run_tests = false }) {
+  const res = await fetch(`${API_BASE}/pa01/prg_viewer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ seed_hex, length_bytes, run_tests }),
+  });
+  return res.json();
+}
