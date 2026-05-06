@@ -242,6 +242,14 @@ body {
 .proof-detail { font-size: 0.8rem; color: var(--text-muted); line-height: 1.5; }
 .proof-theorem { color: var(--accent3); font-weight: 600; margin-bottom: 0.3rem; }
 .proof-pa { display: inline-block; background: var(--accent); color: #fff; border-radius: 4px; padding: 0.1rem 0.4rem; font-size: 0.72rem; font-weight: 700; }
+.proof-hop {
+  margin-top: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.proof-hop strong { color: var(--accent2); }
 
 /* ── Loading spinner ── */
 .spinner {

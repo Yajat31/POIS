@@ -205,7 +205,10 @@ function ReducePanel({ srcHandle, srcPrimitive, onTargetChange }) {
         result.error ? <StubCard message={`Error: ${result.error}`} /> :
         <>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            <span className="tag tag-ok">✓ {srcPrimitive} → {tgtPrimitive}</span>
+            <span className="tag tag-ok">
+              ✓ {result.path?.join(" → ") || `${srcPrimitive} → ${tgtPrimitive}`}
+            </span>
+            {result.hop_count > 1 && <span className="tag tag-stub">{result.hop_count} hops</span>}
           </div>
           {result.construction && (
             <div className="step-item">
@@ -270,6 +273,12 @@ function ProofSummaryPanel({ srcPrimitive, tgtPrimitive, foundation, isOpen, onT
                 <div className="proof-theorem">📐 {proof.theorem}</div>
                 {proof.construction && <div style={{ marginBottom: "0.4rem" }}>{proof.construction}</div>}
                 {proof.pa && <span className="proof-pa">{proof.pa}</span>}
+                {proof.path_reductions?.map((red, i) => (
+                  <div key={i} className="proof-hop">
+                    <strong>{red.edge}</strong>: {red.theorem}
+                    {red.pa && <span className="proof-pa">{red.pa}</span>}
+                  </div>
+                ))}
                 {proof.primitives?.map((prim, i) => (
                   <div key={i} style={{ marginTop: "0.3rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
                     <span className={`tag ${prim.implemented ? "tag-ok" : "tag-stub"}`}>

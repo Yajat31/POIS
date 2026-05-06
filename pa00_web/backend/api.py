@@ -210,28 +210,6 @@ def reduce_primitive_to_target(req: ReduceRequest) -> dict:
     if direction == "backward":
         src, tgt = tgt, src
 
-    # Check routing
-    key = (src, tgt)
-    red = REDUCTIONS.get(key)
-    if red is None:
-        reachable = REDUCTION_GRAPH.get(src, [])
-        if tgt not in reachable:
-            path = _bfs(src, tgt)
-            if path:
-                return {
-                    "status": "composed_path",
-                    "message": f"No direct reduction from {src} to {tgt}. Composed path exists.",
-                    "composed_path": path,
-                    "hint": f"Traverse: {' → '.join(path)}",
-                    "suggestion": "Try bidirectional mode or step through the path manually.",
-                }
-            return {
-                "status": "no_path",
-                "message": f"No path from {src} to {tgt} in the Minicrypt clique.",
-                "hint": "This pair is not adjacent and has no composed path. Check the PDF clique diagram.",
-                "supported_sources": list(REDUCTION_GRAPH.keys()),
-            }
-
     val = req.query_hex.strip() or "00" * 16
     if len(val) % 2 != 0:
         val = "0" + val
@@ -240,31 +218,148 @@ def reduce_primitive_to_target(req: ReduceRequest) -> dict:
     except ValueError:
         return {"error": "query_hex must be valid hex", "status": "error"}
 
-    # Compute output using ONLY handle data — no direct AES/DLP imports here
-    output_hex = _compute_reduction_output(src, tgt, handle, query)
+    path = _bfs(src, tgt)
+    if not path:
+        return {
+            "status": "no_path",
+            "message": f"No path from {src} to {tgt} in the Minicrypt clique.",
+            "hint": "This pair is not connected in the current routing table.",
+            "supported_sources": list(REDUCTION_GRAPH.keys()),
+        }
+
+    current_handle = dict(handle or {})
+    all_steps = []
+    hop_outputs = []
+    for hop_index, (hop_src, hop_tgt) in enumerate(zip(path, path[1:]), start=1):
+        hop = _compute_reduction_hop(
+            hop_index=hop_index,
+            src=hop_src,
+            tgt=hop_tgt,
+            handle=current_handle,
+            query=query,
+        )
+        all_steps.extend(hop["steps"])
+        hop_outputs.append({
+            "hop": hop_index,
+            "source": hop_src,
+            "target": hop_tgt,
+            "output_hex": hop["output_hex"],
+            "theorem": hop["theorem"],
+        })
+        current_handle = hop["handle"]
+
+    final_output = hop_outputs[-1]["output_hex"] if hop_outputs else ""
+    direct_red = REDUCTIONS.get((src, tgt), {})
 
     return {
         "status": "ok",
         "source": src, "target": tgt,
         "direction": direction,
-        "theorem": red["theorem"],
-        "construction": red["construction"],
-        "pa": red["pa"],
-        "output_hex": output_hex,
+        "path": path,
+        "hop_count": len(path) - 1,
+        "theorem": direct_red.get("theorem", "Composed reduction via shortest clique path"),
+        "construction": direct_red.get("construction", " → ".join(path)),
+        "pa": direct_red.get("pa", "multiple"),
+        "output_hex": final_output,
+        "hop_outputs": hop_outputs,
+        "reduction_steps": all_steps,
+        "final_handle": current_handle,
         "black_box_enforced": True,
-        "note": "Column 2 consumed only the handle from Column 1; no AES/DLP called directly.",
+        "note": "Column 2 consumed only the current primitive handle at each hop; the foundation is not called directly.",
     }
+
+
+def _compute_reduction_hop(hop_index: int, src: str, tgt: str, handle: dict, query: bytes) -> dict:
+    red = REDUCTIONS[(src, tgt)]
+    output_hex = _compute_reduction_output(src, tgt, handle, query)
+    next_handle = _derive_handle_for_target(tgt, handle, output_hex, query)
+    steps = [
+        {
+            "step": f"Hop {hop_index}: {src} → {tgt}",
+            "description": f"{red['theorem']} ({red['pa']})",
+        },
+        {
+            "step": "Construction",
+            "description": red["construction"],
+            "output_hex": output_hex,
+        },
+    ]
+    return {
+        "output_hex": output_hex,
+        "handle": next_handle,
+        "steps": steps,
+        "theorem": red["theorem"],
+    }
+
+
+def _hex_to_bytes(value: str, min_len: int = 16) -> bytes:
+    if not value or value.startswith("<"):
+        return b"\x00" * min_len
+    value = value[2:] if value.startswith("0x") else value
+    if len(value) % 2:
+        value = "0" + value
+    raw = bytes.fromhex(value)
+    if len(raw) < min_len:
+        raw = raw + b"\x00" * (min_len - len(raw))
+    return raw
+
+
+def _handle_key_bytes(handle: dict, query: bytes) -> bytes:
+    if "k_hex" in handle:
+        return _hex_to_bytes(handle["k_hex"], 16)[:16]
+    if "output_hex" in handle:
+        return _hex_to_bytes(handle["output_hex"], 16)[:16]
+    if "digest_hex" in handle:
+        return _hex_to_bytes(handle["digest_hex"], 16)[:16]
+    if "seed" in handle:
+        return int(handle["seed"]).to_bytes(16, "big", signed=False)[-16:]
+    return (query + b"\x00" * 16)[:16]
+
+
+def _derive_handle_for_target(tgt: str, previous: dict, output_hex: str, query: bytes) -> dict:
+    next_handle = dict(previous or {})
+    next_handle["type"] = tgt
+    if tgt in ("OWF", "OWP"):
+        for name in ("p", "q", "g"):
+            if name in previous:
+                next_handle[name] = previous[name]
+        next_handle["y"] = int(output_hex, 16) if output_hex.startswith("0x") else output_hex
+    elif tgt == "PRG":
+        q = int(previous.get("q", 65537))
+        seed_bytes = _hex_to_bytes(output_hex, 4)
+        next_handle["seed"] = int.from_bytes(seed_bytes[:4], "big") % q or 1
+        next_handle["output_hex"] = output_hex
+    elif tgt in ("PRF", "PRP", "MAC", "HMAC"):
+        next_handle["k_hex"] = _handle_key_bytes(previous, query).hex()
+        next_handle["output_hex"] = output_hex
+    elif tgt == "CRHF":
+        next_handle["digest_hex"] = output_hex
+    return next_handle
 
 
 def _compute_reduction_output(src: str, tgt: str, handle: dict, query: bytes) -> str:
     """Compute the reduction output using only the handle (black-box discipline)."""
     try:
-        h_type = handle.get("type", "")
+        # GGM: PRG → PRF, using the PRG seed from Column 1 as the black box root.
+        if src == "PRG" and tgt == "PRF" and "seed" in handle:
+            from src.pa02_prf.ggm_prf import GGMPRF
+            from src.common.bytes_utils import bytes_to_bits
+            x_bits = bytes_to_bits(query or b"\x00")[:16]
+            y = GGMPRF().F(int(handle["seed"]), x_bits)
+            return hex(y)
 
-        # PRF / PRP based outputs
-        if tgt in ("PRF", "PRP", "MAC") and "k_hex" in handle:
+        # PRF → PRG: G(s)=F_s(0)||F_s(1).
+        if src == "PRF" and tgt == "PRG":
+            from src.pa02_prf.ggm_prf import PRGFromPRF
+            k = _handle_key_bytes(handle, query)
+            return PRGFromPRF().expand(k, 16).hex()
+
+        # PRF / PRP / MAC-style outputs.
+        if tgt in ("PRF", "PRP", "MAC") and (
+            "k_hex" in handle or "output_hex" in handle or "digest_hex" in handle or "seed" in handle
+        ):
             from src.pa02_prf.ggm_prf import PRFFromAES
-            k = bytes.fromhex(handle["k_hex"])
+            k = _handle_key_bytes(handle, query)
             x = (query + b"\x00" * 16)[:16]
             return PRFFromAES().F(k, x).hex()
 
@@ -276,16 +371,16 @@ def _compute_reduction_output(src: str, tgt: str, handle: dict, query: bytes) ->
             return prg.next_bytes(8).hex()
 
         # HMAC based output
-        if tgt == "HMAC" and "k_hex" in handle:
+        if tgt == "HMAC" and ("k_hex" in handle or "digest_hex" in handle or "output_hex" in handle):
             from src.pa10_hmac_eth.hmac_eth import HMAC
             from src.pa08_dlp_hash.dlp_hash import DLPHash, gen_dlp_hash_params, DEMO_PARAMS
-            k = bytes.fromhex(handle["k_hex"])
+            k = _handle_key_bytes(handle, query)
             params = gen_dlp_hash_params(DEMO_PARAMS)
             hf = DLPHash(params, block_size=16)
             return HMAC(k, query, hf).hex()
 
-        # CRHF output — re-hash query using handle's digest as chaining value
-        if tgt == "CRHF" and "digest_hex" in handle:
+        # CRHF output.
+        if tgt == "CRHF":
             from src.pa08_dlp_hash.dlp_hash import DLPHash, gen_dlp_hash_params, DEMO_PARAMS
             params = gen_dlp_hash_params(DEMO_PARAMS)
             hf = DLPHash(params, block_size=16)
@@ -336,11 +431,22 @@ def get_proof_summary(source_type: str, target_type: str, direction: str = "forw
     key = (src, tgt)
     red = REDUCTIONS.get(key, {})
     path = _bfs(src, tgt)
+    path_reductions = []
+    if path:
+        for hop_src, hop_tgt in zip(path, path[1:]):
+            hop = REDUCTIONS.get((hop_src, hop_tgt), {})
+            path_reductions.append({
+                "edge": f"{hop_src}→{hop_tgt}",
+                "pa": hop.get("pa", ""),
+                "theorem": hop.get("theorem", ""),
+                "construction": hop.get("construction", ""),
+            })
     primitives = [{"name": p, **PRIMITIVES.get(p, {"pa": "?", "implemented": False, "name": p})}
                   for p in (path or [])]
     return {
         "source": source_type, "target": target_type, "direction": direction,
         "path": path, "primitives": primitives,
+        "path_reductions": path_reductions,
         "theorem": red.get("theorem", "See composed path for security argument"),
         "construction": red.get("construction", ""),
         "pa": red.get("pa", ""),
