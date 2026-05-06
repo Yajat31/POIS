@@ -470,6 +470,10 @@ body {
   word-break: break-all;
 }
 
+.chain-row.compact {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
 @media (max-width: 900px) {
   .main-columns,
   .demo-grid,

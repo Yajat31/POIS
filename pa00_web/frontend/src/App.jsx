@@ -17,6 +17,10 @@ import {
   runDlpHash,
   runBirthdayAttack,
   runHmacCompare,
+  runDhExchange,
+  runRsaDeterminism,
+  runMillerRabin,
+  runHastad,
 } from "./api/client.js";
 
 const FOUNDATIONS = ["DLP", "AES"];
@@ -955,6 +959,253 @@ function HmacComparePanel() {
   );
 }
 
+function DiffieHellmanPanel() {
+  const [a, setA] = useState("5");
+  const [b, setB] = useState("7");
+  const [enableEve, setEnableEve] = useState(false);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runDhExchange({ a: Number(a), b: Number(b), enable_eve: enableEve }));
+    } finally {
+      setLoading(false);
+    }
+  }, [a, b, enableEve]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#11 — Live Diffie-Hellman Exchange</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Alice private a</label>
+          <input className="styled-input" value={a} onChange={(e) => setA(e.target.value.replace(/\D/g, ""))} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Bob private b</label>
+          <input className="styled-input" value={b} onChange={(e) => setB(e.target.value.replace(/\D/g, ""))} />
+        </div>
+      </div>
+      <div className="button-row">
+        <button className="action-btn" onClick={() => setA("0")}>Randomize Alice</button>
+        <button className="action-btn" onClick={() => setB("0")}>Randomize Bob</button>
+      </div>
+      <label className="toggle-line">
+        <input type="checkbox" checked={enableEve} onChange={(e) => setEnableEve(e.target.checked)} />
+        Enable Eve MITM
+      </label>
+      {result?.status === "ok" && (
+        <>
+          <div className="metric-row">
+            <span className="tag tag-stub">p {result.group.p}</span>
+            <span className="tag tag-stub">g {result.group.g}</span>
+            <span className={result.match ? "tag tag-ok" : "tag tag-err"}>K match {String(result.match)}</span>
+          </div>
+          <div className="compare-grid">
+            <div className="block-card">
+              <div className="step-title">Alice</div>
+              <div className="step-desc">A = g^a mod p = {result.alice.public}</div>
+              <div className="step-value">K = {result.alice.shared}</div>
+            </div>
+            <div className="block-card">
+              <div className="step-title">Bob</div>
+              <div className="step-desc">B = g^b mod p = {result.bob.public}</div>
+              <div className="step-value">K = {result.bob.shared}</div>
+            </div>
+          </div>
+          {result.eve && (
+            <div className="block-card changed">
+              <div className="step-title">Eve intercepts</div>
+              <div className="step-desc">E = {result.eve.eve_public_key}</div>
+              <div className="step-value">Alice/Eve K {result.eve.eve_key_to_alice}</div>
+              <div className="step-value">Bob/Eve K {result.eve.eve_key_to_bob}</div>
+            </div>
+          )}
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function RsaDemoPanel() {
+  const [message, setMessage] = useState("yes");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runRsaDeterminism({ message }));
+    } finally {
+      setLoading(false);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#12 — Textbook RSA Determinism</div>
+      <div className="input-wrapper">
+        <label className="select-label">Message</label>
+        <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+      </div>
+      {result?.status === "ok" && (
+        <div className="compare-grid">
+          <div className={`block-card ${result.textbook.identical ? "changed" : ""}`}>
+            <div className="step-title">Textbook RSA</div>
+            <div className="step-desc">identical: {String(result.textbook.identical)}</div>
+            <div className="step-value">c1 {result.textbook.c1_hex}</div>
+            <div className="step-value">c2 {result.textbook.c2_hex}</div>
+          </div>
+          <div className={`block-card ${!result.pkcs15.identical ? "" : "changed"}`}>
+            <div className="step-title">PKCS#1 v1.5</div>
+            <div className="step-desc">identical: {String(result.pkcs15.identical)}</div>
+            <div className="step-value">c1 {result.pkcs15.c1_hex}</div>
+            <div className="step-value">c2 {result.pkcs15.c2_hex}</div>
+          </div>
+          <div className="block-card">
+            <div className="step-title">Padding bytes 1</div>
+            <div className="step-value">{result.pkcs15.padding1_hex}</div>
+          </div>
+          <div className="block-card">
+            <div className="step-title">Padding bytes 2</div>
+            <div className="step-value">{result.pkcs15.padding2_hex}</div>
+          </div>
+        </div>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function MillerRabinPanel() {
+  const [n, setN] = useState("561");
+  const [rounds, setRounds] = useState(5);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runMillerRabin({ n, rounds }));
+    } finally {
+      setLoading(false);
+    }
+  }, [n, rounds]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#13 — Miller-Rabin Primality Tester</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">n</label>
+          <input className="styled-input" value={n} onChange={(e) => setN(e.target.value.replace(/[^\d]/g, ""))} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Rounds: {rounds}</label>
+          <input className="styled-range" type="range" min="1" max="40" value={rounds} onChange={(e) => setRounds(Number(e.target.value))} />
+        </div>
+      </div>
+      <div className="button-row">
+        <button className="action-btn" onClick={() => setN("561")}>561</button>
+        <button className="action-btn" onClick={() => setN("32416190071")}>prime</button>
+        <button className="action-btn" onClick={() => setN("32416190070")}>composite</button>
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className={`result-banner ${result.probably_prime ? "pass" : "fail"}`}>{result.result}</div>
+          {result.carmichael_note && <div className="info-card">{result.carmichael_note}</div>}
+          <div className="chain-list">
+            {result.trace.map((item) => (
+              <div key={item.witness} className="chain-row compact">
+                <span className="path-pill">a={item.witness}</span>
+                <code>{item.values.join(" → ")}</code>
+                <span className={item.passes_round ? "tag tag-ok" : "tag tag-err"}>{item.passes_round ? "pass" : "witness"}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function HastadPanel() {
+  const [message, setMessage] = useState("42");
+  const [usePadding, setUsePadding] = useState(false);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runHastad({ message, use_padding: usePadding }));
+    } finally {
+      setLoading(false);
+    }
+  }, [message, usePadding]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#14 — Håstad Broadcast Attack</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Message</label>
+          <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+        </div>
+        <label className="toggle-line">
+          <input type="checkbox" checked={usePadding} onChange={(e) => setUsePadding(e.target.checked)} />
+          Use PKCS padding
+        </label>
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className="block-grid">
+            {result.recipients.map((r, i) => (
+              <div key={i} className="block-card">
+                <div className="step-title">Recipient {i + 1}</div>
+                <div className="step-desc">N: {r.n_hex}</div>
+                <div className="step-value">c: {r.ciphertext_hex}</div>
+              </div>
+            ))}
+          </div>
+          <div className={`result-banner ${result.attack_succeeded ? "pass" : "fail"}`}>
+            exact cube root: {String(result.exact_root)}; recovered: {result.recovered_text || result.root}
+          </div>
+          <div className="step-item">
+            <div className="step-title">CRT gives m^3</div>
+            <div className="step-value">{result.crt_combined_hex}</div>
+          </div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
 function ReducePanel({ srcHandle, srcPrimitive, onTargetChange }) {
   const [tgtPrimitive, setTgtPrimitive] = useState("MAC");
   const [queryHex, setQueryHex] = useState("0102030405060708090a0b0c0d0e0f10");
@@ -1169,6 +1420,10 @@ export default function App() {
       <DlpHashPanel />
       <BirthdayAttackPanel />
       <HmacComparePanel />
+      <DiffieHellmanPanel />
+      <RsaDemoPanel />
+      <MillerRabinPanel />
+      <HastadPanel />
 
       <ProofSummaryPanel
         srcPrimitive={srcPrimitive}

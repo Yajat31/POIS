@@ -171,6 +171,22 @@ class HMACCompareRequest(BaseModel):
     message: str = "amount=100&to=bob"
     extension: str = "&admin=true"
 
+class DHDemoRequest(BaseModel):
+    a: int = 0
+    b: int = 0
+    enable_eve: bool = False
+
+class RSADemoRequest(BaseModel):
+    message: str = "yes"
+
+class MillerRabinDemoRequest(BaseModel):
+    n: str = "561"
+    rounds: int = 5
+
+class HastadDemoRequest(BaseModel):
+    message: str = "42"
+    use_padding: bool = False
+
 
 def _normalise_hex(value: str, fallback: str = "") -> str:
     val = (value or "").strip() or fallback
@@ -422,6 +438,16 @@ def _blocks(data: bytes, size: int = 16) -> list[bytes]:
 
 def _safe_text(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
+
+
+def _rsa_demo_key(bits: int = 256, e: int = 65537):
+    if not hasattr(_rsa_demo_key, "_cache"):
+        _rsa_demo_key._cache = {}
+    key = (bits, e)
+    if key not in _rsa_demo_key._cache:
+        from src.pa12_rsa.rsa import rsa_keygen
+        _rsa_demo_key._cache[key] = rsa_keygen(bits, e=e)
+    return _rsa_demo_key._cache[key]
 
 
 @app.post("/pa03/cpa_challenge")
@@ -909,6 +935,179 @@ def pa10_hmac_compare(req: HMACCompareRequest) -> dict:
     }
 
 
+@app.post("/pa11/dh_exchange")
+def pa11_dh_exchange(req: DHDemoRequest) -> dict:
+    """PA#11 live Diffie-Hellman exchange with optional MITM."""
+    from src.foundations.dlp_group import MEDIUM_DEMO_PARAMS
+    from src.common.math_utils import modexp
+    from src.pa11_dh.dh import dh_mitm_attack
+    from src.common.randomness import random_element_zq
+
+    group = MEDIUM_DEMO_PARAMS
+    a = int(req.a or 0) % group.q or random_element_zq(group.q)
+    b = int(req.b or 0) % group.q or random_element_zq(group.q)
+    A = modexp(group.g, a, group.p)
+    B = modexp(group.g, b, group.p)
+    K_alice = modexp(B, a, group.p)
+    K_bob = modexp(A, b, group.p)
+    result = {
+        "status": "ok",
+        "group": {"p": group.p, "q": group.q, "g": group.g},
+        "alice": {"private": a, "public": A, "shared": K_alice},
+        "bob": {"private": b, "public": B, "shared": K_bob},
+        "match": K_alice == K_bob,
+        "steps": [
+            {"step": "Alice sends A", "description": "A = g^a mod p", "output_hex": hex(A)},
+            {"step": "Bob sends B", "description": "B = g^b mod p", "output_hex": hex(B)},
+            {"step": "Shared secret", "description": "Alice computes B^a; Bob computes A^b.", "output_hex": hex(K_alice)},
+        ],
+    }
+    if req.enable_eve:
+        result["eve"] = dh_mitm_attack(group)
+    return result
+
+
+@app.post("/pa12/rsa_determinism")
+def pa12_rsa_determinism(req: RSADemoRequest) -> dict:
+    """PA#12 textbook RSA determinism vs PKCS#1 v1.5 randomized encryption."""
+    from src.pa12_rsa.rsa import rsa_enc, pkcs15_enc
+    from src.common.bytes_utils import bytes_to_int, int_to_bytes
+    from src.common.padding import pkcs1_v15_pad
+    from src.common.math_utils import modexp
+
+    pk, sk = _rsa_demo_key(256, 65537)
+    n_bytes = (pk.n.bit_length() + 7) // 8
+    message = (req.message or "yes").encode()[: max(1, n_bytes - 11)]
+    m_int = bytes_to_int(message)
+    c1 = rsa_enc(pk, m_int)
+    c2 = rsa_enc(pk, m_int)
+
+    em1 = pkcs1_v15_pad(message, n_bytes)
+    em2 = pkcs1_v15_pad(message, n_bytes)
+    pc1 = int_to_bytes(modexp(bytes_to_int(em1), pk.e, pk.n), n_bytes)
+    pc2 = int_to_bytes(modexp(bytes_to_int(em2), pk.e, pk.n), n_bytes)
+    return {
+        "status": "ok",
+        "message_text": _safe_text(message),
+        "public_key": {"n_hex": hex(pk.n), "e": pk.e},
+        "textbook": {
+            "c1_hex": hex(c1),
+            "c2_hex": hex(c2),
+            "identical": c1 == c2,
+            "conclusion": "same plaintext gives same ciphertext",
+        },
+        "pkcs15": {
+            "c1_hex": pc1.hex(),
+            "c2_hex": pc2.hex(),
+            "identical": pc1 == pc2,
+            "padding1_hex": em1.hex(),
+            "padding2_hex": em2.hex(),
+            "conclusion": "random PS bytes make ciphertexts differ",
+        },
+    }
+
+
+@app.post("/pa13/miller_rabin")
+def pa13_miller_rabin(req: MillerRabinDemoRequest) -> dict:
+    """PA#13 Miller-Rabin tester with witness trace."""
+    from src.pa13_miller_rabin.miller_rabin import is_prime, fermat_test, modexp, _decompose
+
+    try:
+        n = int(str(req.n).strip())
+    except ValueError:
+        return {"status": "error", "message": "n must be an integer"}
+    rounds = max(1, min(int(req.rounds or 5), 40))
+    if n < 2:
+        return {"status": "ok", "n": n, "rounds": rounds, "probably_prime": False, "trace": []}
+
+    trace = []
+    if n > 3 and n % 2 == 1:
+        s, d = _decompose(n - 1)
+        witnesses = []
+        candidate = 2
+        while len(witnesses) < rounds and candidate <= n - 2:
+            witnesses.append(candidate)
+            candidate += 1
+        composite = False
+        for a in witnesses:
+            x = modexp(a, d, n)
+            round_steps = [x]
+            passes = x in (1, n - 1)
+            if not passes:
+                for _ in range(s - 1):
+                    x = modexp(x, 2, n)
+                    round_steps.append(x)
+                    if x == n - 1:
+                        passes = True
+                        break
+            if not passes:
+                composite = True
+            trace.append({"witness": a, "values": round_steps, "passes_round": passes})
+            if composite:
+                break
+        probably_prime = not composite
+        decomposition = {"s": s, "d": d}
+    else:
+        probably_prime = is_prime(n, rounds)
+        decomposition = None
+
+    actual_wrapper = is_prime(n, rounds)
+    return {
+        "status": "ok",
+        "n": n,
+        "rounds": rounds,
+        "probably_prime": probably_prime and actual_wrapper,
+        "result": "PROBABLY PRIME" if (probably_prime and actual_wrapper) else "COMPOSITE",
+        "decomposition": decomposition,
+        "trace": trace,
+        "fermat_says_prime": fermat_test(n, min(rounds, 5)) if n > 3 else actual_wrapper,
+        "carmichael_note": "561 = 3 * 11 * 17; Fermat can be fooled, Miller-Rabin catches it." if n == 561 else "",
+    }
+
+
+@app.post("/pa14/hastad")
+def pa14_hastad(req: HastadDemoRequest) -> dict:
+    """PA#14 Håstad broadcast attack visualizer for e=3."""
+    from src.pa12_rsa.rsa import rsa_keygen, rsa_enc, pkcs15_enc
+    from src.pa14_crt_attack.crt_attack import crt_wrapper, integer_eth_root
+    from src.common.bytes_utils import bytes_to_int
+
+    e = 3
+    raw = (req.message or "42").encode()[:4]
+    m = bytes_to_int(raw) or 42
+    recipients = []
+    residues = []
+    moduli = []
+    for _ in range(e):
+        pk, _ = rsa_keygen(128, e=e)
+        if req.use_padding:
+            c = bytes_to_int(pkcs15_enc(pk, raw[:5] or b"42"))
+        else:
+            c = rsa_enc(pk, m)
+        recipients.append({"n_hex": hex(pk.n), "ciphertext_hex": hex(c)})
+        residues.append(c)
+        moduli.append(pk.n)
+
+    combined = crt_wrapper(residues, moduli)
+    root = integer_eth_root(combined, e)
+    exact = root ** e == combined
+    return {
+        "status": "ok",
+        "e": e,
+        "message_text": _safe_text(raw),
+        "message_int": m,
+        "use_padding": bool(req.use_padding),
+        "recipients": recipients,
+        "crt_combined_hex": hex(combined),
+        "root": root,
+        "root_hex": hex(root),
+        "exact_root": exact,
+        "recovered_text": _safe_text(int(root).to_bytes(max(1, (int(root).bit_length() + 7) // 8), "big")) if exact else "",
+        "attack_succeeded": exact and root == m and not req.use_padding,
+        "note": "Unpadded textbook RSA broadcasts recover m. Padding makes each encrypted value different, so the cube root is not the original message.",
+    }
+
+
 # ─── Column 2: Source → Target (BLACK-BOX — handle only) ─────
 @app.post("/reduce_primitive_to_target")
 def reduce_primitive_to_target(req: ReduceRequest) -> dict:
@@ -1222,4 +1421,6 @@ def root():
                           "/pa06/cca_malleability", "/pa07/md_chain",
                           "/pa08/dlp_hash", "/pa09/birthday",
                           "/pa10/hmac_compare",
+                          "/pa11/dh_exchange", "/pa12/rsa_determinism",
+                          "/pa13/miller_rabin", "/pa14/hastad",
                           "/clique_reductions"]}

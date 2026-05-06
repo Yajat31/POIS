@@ -155,3 +155,39 @@ export async function runHmacCompare({ message, extension }) {
   });
   return res.json();
 }
+
+export async function runDhExchange({ a, b, enable_eve = false }) {
+  const res = await fetch(`${API_BASE}/pa11/dh_exchange`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ a, b, enable_eve }),
+  });
+  return res.json();
+}
+
+export async function runRsaDeterminism({ message }) {
+  const res = await fetch(`${API_BASE}/pa12/rsa_determinism`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  return res.json();
+}
+
+export async function runMillerRabin({ n, rounds }) {
+  const res = await fetch(`${API_BASE}/pa13/miller_rabin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ n, rounds }),
+  });
+  return res.json();
+}
+
+export async function runHastad({ message, use_padding = false }) {
+  const res = await fetch(`${API_BASE}/pa14/hastad`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, use_padding }),
+  });
+  return res.json();
+}
