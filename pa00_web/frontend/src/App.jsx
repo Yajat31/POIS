@@ -14,6 +14,9 @@ import {
   runLengthExtension,
   runCcaMalleability,
   runMdChain,
+  runDlpHash,
+  runBirthdayAttack,
+  runHmacCompare,
 } from "./api/client.js";
 
 const FOUNDATIONS = ["DLP", "AES"];
@@ -774,6 +777,184 @@ function MerkleDamgardPanel() {
   );
 }
 
+function DlpHashPanel() {
+  const [message, setMessage] = useState("DLP hash demo");
+  const [blockSize, setBlockSize] = useState(16);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runDlpHash({ message, block_size: blockSize }));
+    } finally {
+      setLoading(false);
+    }
+  }, [message, blockSize]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#8 — DLP Hash Live Demo</div>
+      <div className="info-card">{result?.formula || "DLP compression: h(x,y)=g^x * h_hat^y mod p."}</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Message</label>
+          <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Block Size: {blockSize}</label>
+          <input className="styled-range" type="range" min="9" max="64" value={blockSize} onChange={(e) => setBlockSize(Number(e.target.value))} />
+        </div>
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className="metric-row">
+            <span className="tag tag-ok">digest {result.digest_hex}</span>
+            <span className="tag tag-stub">p={result.p}</span>
+            <span className="tag tag-stub">q={result.q}</span>
+            <span className="tag tag-stub">h_hat={result.h_hat}</span>
+          </div>
+          <div className="chain-list">
+            {result.trace.map((item) => (
+              <div key={item.block} className="chain-row">
+                <span className="path-pill">B{item.block}</span>
+                <code>x={item.x}</code>
+                <code>y={item.y}</code>
+                <span className="path-arrow">→</span>
+                <code>{item.next_state_hex}</code>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function BirthdayAttackPanel() {
+  const [bits, setBits] = useState(12);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runBirthdayAttack({ n_bits: bits, max_evaluations: 20000 }));
+    } finally {
+      setLoading(false);
+    }
+  }, [bits]);
+
+  useEffect(() => {
+    runDemo();
+  }, [runDemo]);
+
+  const attack = result?.attack;
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#9 — Birthday Attack Live Demo</div>
+      <div className="info-card">For an n-bit hash, collisions appear after about 2^(n/2) evaluations, not 2^n.</div>
+      <div className="input-wrapper">
+        <label className="select-label">Truncated output bits: {bits}</label>
+        <input className="styled-range" type="range" min="4" max="20" value={bits} onChange={(e) => setBits(Number(e.target.value))} />
+      </div>
+      {attack && (
+        <>
+          <div className="metric-row">
+            <span className={`tag ${attack.collision_found ? "tag-ok" : "tag-err"}`}>
+              {attack.collision_found ? "collision found" : "no collision"}
+            </span>
+            <span className="tag tag-stub">evaluations {attack.evaluations}</span>
+            <span className="tag tag-stub">birthday bound {attack.birthday_bound}</span>
+            {attack.ratio && <span className="tag tag-stub">ratio {attack.ratio}</span>}
+          </div>
+          {attack.collision_found && (
+            <div className="block-grid">
+              <div className="block-card">
+                <div className="step-title">x1</div>
+                <div className="step-value">{attack.x1}</div>
+              </div>
+              <div className="block-card">
+                <div className="step-title">x2</div>
+                <div className="step-value">{attack.x2}</div>
+              </div>
+              <div className="block-card changed">
+                <div className="step-title">same truncated hash</div>
+                <div className="step-value">{attack.hash_value}</div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function HmacComparePanel() {
+  const [message, setMessage] = useState("amount=100&to=bob");
+  const [extension, setExtension] = useState("&admin=true");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runHmacCompare({ message, extension }));
+    } finally {
+      setLoading(false);
+    }
+  }, [message, extension]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#10 — Length Extension vs HMAC</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Message</label>
+          <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Suffix</label>
+          <input className="styled-input text-input" value={extension} onChange={(e) => setExtension(e.target.value)} />
+        </div>
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className="info-card">Extended message: {result.extended_message_display}</div>
+          <div className="compare-grid">
+            <div className={`block-card ${result.naive.attack_succeeds ? "changed" : ""}`}>
+              <div className="step-title">Naive H(k || m)</div>
+              <div className="step-desc">attack succeeds: {String(result.naive.attack_succeeds)}</div>
+              <div className="step-value">forged {result.naive.forged_tag_hex}</div>
+              <div className="step-value">actual {result.naive.actual_extended_tag_hex}</div>
+            </div>
+            <div className={`block-card ${result.hmac.attack_succeeds ? "changed" : ""}`}>
+              <div className="step-title">HMAC</div>
+              <div className="step-desc">attack succeeds: {String(result.hmac.attack_succeeds)}</div>
+              <div className="step-value">attempt {result.hmac.forged_attempt_hex}</div>
+              <div className="step-value">real {result.hmac.real_extended_tag_hex}</div>
+            </div>
+          </div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
 function ReducePanel({ srcHandle, srcPrimitive, onTargetChange }) {
   const [tgtPrimitive, setTgtPrimitive] = useState("MAC");
   const [queryHex, setQueryHex] = useState("0102030405060708090a0b0c0d0e0f10");
@@ -985,6 +1166,9 @@ export default function App() {
       <MacGamePanel />
       <CcaMalleabilityPanel />
       <MerkleDamgardPanel />
+      <DlpHashPanel />
+      <BirthdayAttackPanel />
+      <HmacComparePanel />
 
       <ProofSummaryPanel
         srcPrimitive={srcPrimitive}

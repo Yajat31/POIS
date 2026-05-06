@@ -440,13 +440,48 @@ body {
   margin-bottom: 0.35rem;
 }
 
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.chain-list {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.chain-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem;
+}
+
+.chain-row code {
+  color: #a5f3fc;
+  font-size: 0.7rem;
+  word-break: break-all;
+}
+
 @media (max-width: 900px) {
   .main-columns,
   .demo-grid,
   .test-grid,
   .block-grid,
   .oracle-list,
-  .message-compare {
+  .message-compare,
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chain-row {
     grid-template-columns: 1fr;
   }
 

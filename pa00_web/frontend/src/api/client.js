@@ -128,3 +128,30 @@ export async function runMdChain({ message, block_size }) {
   });
   return res.json();
 }
+
+export async function runDlpHash({ message, block_size }) {
+  const res = await fetch(`${API_BASE}/pa08/dlp_hash`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, block_size }),
+  });
+  return res.json();
+}
+
+export async function runBirthdayAttack({ n_bits, max_evaluations }) {
+  const res = await fetch(`${API_BASE}/pa09/birthday`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ n_bits, max_evaluations }),
+  });
+  return res.json();
+}
+
+export async function runHmacCompare({ message, extension }) {
+  const res = await fetch(`${API_BASE}/pa10/hmac_compare`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, extension }),
+  });
+  return res.json();
+}

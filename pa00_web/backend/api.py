@@ -147,6 +147,30 @@ class MDChainRequest(BaseModel):
     message: str = "Merkle-Damgard demo"
     block_size: int = 16
 
+class DLPHashDemoRequest(BaseModel):
+    message: str = "DLP hash demo"
+    block_size: int = 16
+
+class BirthdayDemoRequest(BaseModel):
+    n_bits: int = 12
+    max_evaluations: int = 20000
+
+class HMACCompareRequest(BaseModel):
+    message: str = "amount=100&to=bob"
+    extension: str = "&admin=true"
+
+class DLPHashDemoRequest(BaseModel):
+    message: str = "DLP hash demo"
+    block_size: int = 16
+
+class BirthdayDemoRequest(BaseModel):
+    n_bits: int = 12
+    max_evaluations: int = 5000
+
+class HMACCompareRequest(BaseModel):
+    message: str = "amount=100&to=bob"
+    extension: str = "&admin=true"
+
 
 def _normalise_hex(value: str, fallback: str = "") -> str:
     val = (value or "").strip() or fallback
@@ -763,6 +787,128 @@ def pa07_md_chain(req: MDChainRequest) -> dict:
     }
 
 
+@app.post("/pa08/dlp_hash")
+def pa08_dlp_hash(req: DLPHashDemoRequest) -> dict:
+    """PA#8 DLP hash live trace over Merkle-Damgard."""
+    from src.common.padding import md_pad
+    from src.common.bytes_utils import bytes_to_int, int_to_bytes
+    from src.common.math_utils import modexp
+    from src.pa08_dlp_hash.dlp_hash import DLPHash, DLPCompress, gen_dlp_hash_params
+    from src.foundations.dlp_group import MEDIUM_DEMO_PARAMS
+
+    block_size = max(9, min(int(req.block_size or 16), 64))
+    message = (req.message or "").encode()
+    params = gen_dlp_hash_params(MEDIUM_DEMO_PARAMS)
+    h = DLPHash(params, block_size=block_size)
+    compress = DLPCompress(params)
+    padded = md_pad(message, block_size)
+    state = int_to_bytes(params.g, compress.elem_bytes)
+    trace = []
+    for index, block in enumerate(_blocks(padded, block_size)):
+        x = bytes_to_int(state) % params.q
+        y = bytes_to_int(block) % params.q
+        gx = modexp(params.g, x, params.p)
+        hy = modexp(params.h_hat, y, params.p)
+        next_state = compress.compress(state, block)
+        trace.append({
+            "block": index,
+            "block_hex": block.hex(),
+            "x": x,
+            "y": y,
+            "g_pow_x_hex": hex(gx),
+            "hhat_pow_y_hex": hex(hy),
+            "prev_state_hex": state.hex(),
+            "next_state_hex": next_state.hex(),
+        })
+        state = next_state
+    return {
+        "status": "ok",
+        "message_text": _safe_text(message),
+        "message_hex": message.hex(),
+        "block_size": block_size,
+        "p": params.p,
+        "q": params.q,
+        "g": params.g,
+        "h_hat": params.h_hat,
+        "alpha_trapdoor_demo_only": params.alpha_trapdoor,
+        "padding_hex": padded[len(message):].hex(),
+        "digest_hex": h.hash(message).hex(),
+        "trace": trace,
+        "formula": "compress(H, B) = g^x * h_hat^y mod p, where x=H mod q and y=B mod q",
+    }
+
+
+@app.post("/pa09/birthday")
+def pa09_birthday(req: BirthdayDemoRequest) -> dict:
+    """PA#9 live birthday collision search on truncated PA#8 DLP hash."""
+    from src.pa09_birthday.birthday import birthday_attack, compute_md5_sha1_cost
+    from src.pa08_dlp_hash.dlp_hash import DLPHash, gen_dlp_hash_params
+    from src.foundations.dlp_group import MEDIUM_DEMO_PARAMS
+
+    n_bits = max(4, min(int(req.n_bits or 12), 20))
+    max_evaluations = max(100, min(int(req.max_evaluations or 20000), 200000))
+    params = gen_dlp_hash_params(MEDIUM_DEMO_PARAMS)
+    dlp = DLPHash(params, block_size=16)
+
+    def hash_fn(x: bytes) -> int:
+        return int.from_bytes(dlp.hash(x), "big")
+
+    result = birthday_attack(hash_fn, n_bits, max_evaluations=max_evaluations)
+    return {
+        "status": "ok",
+        "n_bits": n_bits,
+        "max_evaluations": max_evaluations,
+        "attack": result,
+        "cost_context": compute_md5_sha1_cost(),
+    }
+
+
+@app.post("/pa10/hmac_compare")
+def pa10_hmac_compare(req: HMACCompareRequest) -> dict:
+    """PA#10 side-by-side: naive length extension succeeds, HMAC does not."""
+    from src.pa05_mac.mac import naive_mac
+    from src.pa10_hmac_eth.hmac_eth import HMAC
+    from src.pa08_dlp_hash.dlp_hash import DLPHash, gen_dlp_hash_params
+    from src.foundations.dlp_group import MEDIUM_DEMO_PARAMS
+    from src.common.padding import iso7816_pad
+
+    key = b"hidden-demo-key!!"[:16]
+    message = (req.message or "").encode()
+    extension = (req.extension or "").encode()
+
+    naive_tag = naive_mac(key, message)
+    glue_padding = iso7816_pad(key + message, 16)[len(key + message):]
+    forged_naive = naive_tag
+    for block in _blocks(iso7816_pad(extension, 16)):
+        forged_naive = _xor_bytes_local(forged_naive, block)
+    extended_message = message + glue_padding + extension
+    actual_naive = naive_mac(key, extended_message)
+
+    params = gen_dlp_hash_params(MEDIUM_DEMO_PARAMS)
+    hash_fn = DLPHash(params, block_size=16)
+    hmac_tag = HMAC(key, message, hash_fn)
+    forged_hmac_attempt = hash_fn.hash(hmac_tag + extension)
+    real_hmac_extended = HMAC(key, message + extension, hash_fn)
+    return {
+        "status": "ok",
+        "message_text": _safe_text(message),
+        "extension_text": _safe_text(extension),
+        "extended_message_display": f"{_safe_text(message)} || pad({glue_padding.hex()}) || {_safe_text(extension)}",
+        "naive": {
+            "original_tag_hex": naive_tag.hex(),
+            "forged_tag_hex": forged_naive.hex(),
+            "actual_extended_tag_hex": actual_naive.hex(),
+            "attack_succeeds": forged_naive == actual_naive,
+        },
+        "hmac": {
+            "original_tag_hex": hmac_tag.hex(),
+            "forged_attempt_hex": forged_hmac_attempt.hex(),
+            "real_extended_tag_hex": real_hmac_extended.hex(),
+            "attack_succeeds": forged_hmac_attempt == real_hmac_extended,
+        },
+    }
+
+
 # ─── Column 2: Source → Target (BLACK-BOX — handle only) ─────
 @app.post("/reduce_primitive_to_target")
 def reduce_primitive_to_target(req: ReduceRequest) -> dict:
@@ -1073,4 +1219,7 @@ def root():
                           "/pa02/ggm_tree", "/pa03/cpa_challenge", "/pa03/cpa_guess",
                           "/pa04/mode_animator", "/pa05/mac_game_start",
                           "/pa05/mac_forgery", "/pa05/length_extension",
+                          "/pa06/cca_malleability", "/pa07/md_chain",
+                          "/pa08/dlp_hash", "/pa09/birthday",
+                          "/pa10/hmac_compare",
                           "/clique_reductions"]}
