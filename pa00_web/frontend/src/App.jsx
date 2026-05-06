@@ -21,6 +21,12 @@ import {
   runRsaDeterminism,
   runMillerRabin,
   runHastad,
+  runSignatures,
+  runElGamal,
+  runCcaPkc,
+  runOtDemo,
+  runSecureAnd,
+  runMillionaire,
 } from "./api/client.js";
 
 const FOUNDATIONS = ["DLP", "AES"];
@@ -1206,6 +1212,360 @@ function HastadPanel() {
   );
 }
 
+function SignaturePanel() {
+  const [message, setMessage] = useState("sign me");
+  const [tamper, setTamper] = useState(true);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runSignatures({ message, tamper }));
+    } finally {
+      setLoading(false);
+    }
+  }, [message, tamper]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#15 — Hash-then-Sign Signatures</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Message</label>
+          <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+        </div>
+        <label className="toggle-line">
+          <input type="checkbox" checked={tamper} onChange={(e) => setTamper(e.target.checked)} />
+          Verify tampered message
+        </label>
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className="compare-grid">
+            <div className={result.valid ? "block-card changed" : "block-card"}>
+              <div className="step-title">Valid signature</div>
+              <div className="step-desc">Verify(m, sigma): {String(result.valid)}</div>
+              <div className="step-value">H(m) {result.hash_hex}</div>
+              <div className="step-value">sigma {result.signature_hex}</div>
+            </div>
+            <div className={!result.tampered_valid ? "block-card" : "block-card changed"}>
+              <div className="step-title">Tamper check</div>
+              <div className="step-desc">{result.tampered_text}</div>
+              <div className="step-value">accepted: {String(result.tampered_valid)}</div>
+            </div>
+          </div>
+          <div className={`result-banner ${result.raw_rsa_forgery.forgery_valid ? "fail" : "pass"}`}>
+            Raw RSA forgery for m1*m2 is valid: {String(result.raw_rsa_forgery.forgery_valid)}
+          </div>
+          <StepList steps={result.steps} />
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function ElGamalPanel() {
+  const [message, setMessage] = useState(5);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runElGamal({ message: Number(message) }));
+    } finally {
+      setLoading(false);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#16 — ElGamal Malleability</div>
+      <div className="input-wrapper">
+        <label className="select-label">Message group element: {message}</label>
+        <input className="styled-range" type="range" min="1" max="22" value={message} onChange={(e) => setMessage(Number(e.target.value))} />
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className="metric-row">
+            <span className="tag tag-stub">p {result.group.p}</span>
+            <span className="tag tag-stub">g {result.group.g}</span>
+            <span className="tag tag-ok">Dec(C) {result.decrypted}</span>
+          </div>
+          <div className="compare-grid">
+            <div className="block-card">
+              <div className="step-title">Ciphertext</div>
+              <div className="step-value">c1 {result.ciphertext.c1}</div>
+              <div className="step-value">c2 {result.ciphertext.c2}</div>
+            </div>
+            <div className="block-card changed">
+              <div className="step-title">Tampered ciphertext</div>
+              <div className="step-desc">c2 becomes 2*c2 mod p</div>
+              <div className="step-value">Dec(C') {result.tampered_decrypted}</div>
+              <div className="step-value">expected {result.expected_tampered}</div>
+            </div>
+          </div>
+          <div className={`result-banner ${result.malleability_succeeds ? "fail" : "pass"}`}>
+            Malleability succeeds: {String(result.malleability_succeeds)}
+          </div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function CcaPkcPanel() {
+  const [message, setMessage] = useState("launch=no");
+  const [tamper, setTamper] = useState(true);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runCcaPkc({ message, tamper }));
+    } finally {
+      setLoading(false);
+    }
+  }, [message, tamper]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#17 — CCA-PKC Signcrypt Panel</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Message</label>
+          <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+        </div>
+        <label className="toggle-line">
+          <input type="checkbox" checked={tamper} onChange={(e) => setTamper(e.target.checked)} />
+          Flip encrypted blob byte
+        </label>
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className="compare-grid">
+            <div className={result.accepted ? "block-card changed" : "block-card"}>
+              <div className="step-title">Original open</div>
+              <div className="step-desc">accepted: {String(result.accepted)}</div>
+              <div className="step-value">{result.decrypted_text}</div>
+            </div>
+            <div className={result.tamper_rejected ? "block-card" : "block-card changed"}>
+              <div className="step-title">Tampered open</div>
+              <div className="step-desc">result: {result.tampered_result}</div>
+              <div className="step-value">rejected: {String(result.tamper_rejected)}</div>
+            </div>
+          </div>
+          <div className="block-card changed">
+            <div className="step-title">Plain ElGamal contrast</div>
+            <div className="step-desc">A changed ciphertext decrypts to a related message.</div>
+            <div className="step-value">tampered Dec {result.elgamal_contrast.tampered_decrypted}</div>
+          </div>
+          <div className="info-card">{result.lineage.split("\n").slice(0, 4).join(" | ")}</div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function OtPanel() {
+  const [m0, setM0] = useState("zero secret");
+  const [m1, setM1] = useState("one secret");
+  const [choice, setChoice] = useState(0);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runOtDemo({ m0, m1, choice }));
+    } finally {
+      setLoading(false);
+    }
+  }, [m0, m1, choice]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#18 — 1-of-2 Oblivious Transfer</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">m0</label>
+          <input className="styled-input text-input" value={m0} onChange={(e) => setM0(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">m1</label>
+          <input className="styled-input text-input" value={m1} onChange={(e) => setM1(e.target.value)} />
+        </div>
+      </div>
+      <div className="segmented">
+        {[0, 1].map((b) => (
+          <button key={b} className={`segment ${choice === b ? "active" : ""}`} onClick={() => setChoice(b)}>Choose m{b}</button>
+        ))}
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className="compare-grid">
+            {result.messages.map((msg) => (
+              <div key={msg.label} className={result.received_label === msg.label ? "block-card changed" : "block-card"}>
+                <div className="step-title">{msg.label}</div>
+                <div className="step-desc">{msg.text}</div>
+                <div className="step-value">encoded {msg.encoded}</div>
+              </div>
+            ))}
+          </div>
+          <div className={`result-banner ${result.privacy_holds ? "pass" : "fail"}`}>
+            Received {result.received_label} = {result.received}; other decrypt attempt = {result.other_attempt}
+          </div>
+          <StepList steps={result.steps} />
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function SecureAndPanel() {
+  const [a, setA] = useState(1);
+  const [b, setB] = useState(1);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runSecureAnd({ a, b }));
+    } finally {
+      setLoading(false);
+    }
+  }, [a, b]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#19 — Secure AND Gate</div>
+      <div className="segmented">
+        {[0, 1].map((bit) => <button key={`a${bit}`} className={`segment ${a === bit ? "active" : ""}`} onClick={() => setA(bit)}>A={bit}</button>)}
+        {[0, 1].map((bit) => <button key={`b${bit}`} className={`segment ${b === bit ? "active" : ""}`} onClick={() => setB(bit)}>B={bit}</button>)}
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className="metric-row">
+            <span className={result.correct ? "tag tag-ok" : "tag tag-err"}>AND {result.and_result}</span>
+            <span className="tag tag-stub">XOR {result.xor_result}</span>
+            <span className="tag tag-stub">NOT A {result.not_a}</span>
+          </div>
+          <div className="info-card">
+            AND is computed as OT messages (0, A) with receiver choice B, so the receiver obtains A*B without learning the unused branch.
+          </div>
+          <div className="block-grid">
+            {result.truth_tables.AND.map((row) => (
+              <div key={`${row.a}${row.b}`} className={row.a === a && row.b === b ? "block-card changed" : "block-card"}>
+                <div className="step-title">{row.a} AND {row.b}</div>
+                <div className="step-value">{row.result}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function MillionairePanel() {
+  const [alice, setAlice] = useState(7);
+  const [bob, setBob] = useState(12);
+  const [bits, setBits] = useState(4);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runMillionaire({ alice: Number(alice), bob: Number(bob), bits: Number(bits) }));
+    } finally {
+      setLoading(false);
+    }
+  }, [alice, bob, bits]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  const maxValue = 2 ** bits - 1;
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#20 — Millionaire Comparison Circuit</div>
+      <div className="demo-grid three">
+        <div className="input-wrapper">
+          <label className="select-label">Alice wealth: {alice}</label>
+          <input className="styled-range" type="range" min="0" max={maxValue} value={alice} onChange={(e) => setAlice(Number(e.target.value))} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Bob wealth: {bob}</label>
+          <input className="styled-range" type="range" min="0" max={maxValue} value={bob} onChange={(e) => setBob(Number(e.target.value))} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Bit width: {bits}</label>
+          <input className="styled-range" type="range" min="2" max="8" value={bits} onChange={(e) => setBits(Number(e.target.value))} />
+        </div>
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className={`result-banner ${result.correct ? "pass" : "fail"}`}>
+            Circuit says Alice greater: {String(result.alice_greater)}; expected {String(result.expected)}
+          </div>
+          <div className="metric-row">
+            <span className="tag tag-stub">Alice bits {result.alice_bits.join("")}</span>
+            <span className="tag tag-stub">Bob bits {result.bob_bits.join("")}</span>
+            <span className="tag tag-ok">{result.circuit.and_calls} secure AND calls</span>
+          </div>
+          <div className="chain-list">
+            {result.transcript.map((gate, i) => (
+              <div key={i} className="chain-row compact">
+                <span className="path-pill">{gate.gate}</span>
+                <code>{JSON.stringify(gate.inputs ?? [gate.input])}</code>
+                <span className="tag tag-stub">out {gate.output}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
 function ReducePanel({ srcHandle, srcPrimitive, onTargetChange }) {
   const [tgtPrimitive, setTgtPrimitive] = useState("MAC");
   const [queryHex, setQueryHex] = useState("0102030405060708090a0b0c0d0e0f10");
@@ -1424,6 +1784,12 @@ export default function App() {
       <RsaDemoPanel />
       <MillerRabinPanel />
       <HastadPanel />
+      <SignaturePanel />
+      <ElGamalPanel />
+      <CcaPkcPanel />
+      <OtPanel />
+      <SecureAndPanel />
+      <MillionairePanel />
 
       <ProofSummaryPanel
         srcPrimitive={srcPrimitive}

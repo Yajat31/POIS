@@ -187,6 +187,31 @@ class HastadDemoRequest(BaseModel):
     message: str = "42"
     use_padding: bool = False
 
+class SignatureDemoRequest(BaseModel):
+    message: str = "sign me"
+    tamper: bool = True
+
+class ElGamalDemoRequest(BaseModel):
+    message: int = 5
+
+class CCAPKCDemoRequest(BaseModel):
+    message: str = "launch=no"
+    tamper: bool = True
+
+class OTDemoRequest(BaseModel):
+    m0: str = "zero secret"
+    m1: str = "one secret"
+    choice: int = 0
+
+class SecureAndDemoRequest(BaseModel):
+    a: int = 1
+    b: int = 1
+
+class MillionaireDemoRequest(BaseModel):
+    alice: int = 7
+    bob: int = 12
+    bits: int = 4
+
 
 def _normalise_hex(value: str, fallback: str = "") -> str:
     val = (value or "").strip() or fallback
@@ -448,6 +473,22 @@ def _rsa_demo_key(bits: int = 256, e: int = 65537):
         from src.pa12_rsa.rsa import rsa_keygen
         _rsa_demo_key._cache[key] = rsa_keygen(bits, e=e)
     return _rsa_demo_key._cache[key]
+
+
+def _demo_dlp_hash(block_size: int = 16):
+    from src.pa08_dlp_hash.dlp_hash import DLPHash, gen_dlp_hash_params, DEMO_PARAMS
+
+    params = gen_dlp_hash_params(DEMO_PARAMS)
+    return DLPHash(params, block_size=block_size)
+
+
+def _bits_msb(value: int, width: int) -> list[int]:
+    return [(int(value) >> shift) & 1 for shift in range(width - 1, -1, -1)]
+
+
+def _encode_ot_message(text: str, p: int) -> int:
+    raw = (text or "").encode()
+    return (sum(raw) % (p - 1)) + 1
 
 
 @app.post("/pa03/cpa_challenge")
@@ -1108,6 +1149,214 @@ def pa14_hastad(req: HastadDemoRequest) -> dict:
     }
 
 
+@app.post("/pa15/signatures")
+def pa15_signatures(req: SignatureDemoRequest) -> dict:
+    """PA#15 hash-then-sign RSA signatures with raw-RSA forgery contrast."""
+    from src.pa15_signatures.signatures import Sign, Verify, demo_multiplicative_forgery, _hash_message
+    from src.common.bytes_utils import bytes_to_int
+    from src.common.math_utils import modexp
+
+    pk, sk = _rsa_demo_key(256, 65537)
+    hash_fn = _demo_dlp_hash(16)
+    message = (req.message or "sign me").encode()
+    sigma = Sign(sk, message, hash_fn)
+    h_int = _hash_message(message, hash_fn) % pk.n or 1
+    recovered = modexp(bytes_to_int(sigma), pk.e, pk.n)
+
+    tampered = message + (b"!" if req.tamper else b"")
+    return {
+        "status": "ok",
+        "message_text": _safe_text(message),
+        "tampered_text": _safe_text(tampered),
+        "public_key": {"n_hex": hex(pk.n), "e": pk.e},
+        "hash_hex": hex(h_int),
+        "signature_hex": sigma.hex(),
+        "recovered_hash_hex": hex(recovered),
+        "valid": Verify(pk, message, sigma, hash_fn),
+        "tampered_valid": Verify(pk, tampered, sigma, hash_fn),
+        "raw_rsa_forgery": demo_multiplicative_forgery(pk, sk),
+        "steps": [
+            {"step": "Hash message", "description": "Compute h = DLPHash(m), then reduce h into the RSA domain.", "output_hex": hex(h_int)},
+            {"step": "Sign", "description": "Compute sigma = h^d mod n.", "output_hex": sigma.hex()},
+            {"step": "Verify", "description": "Check sigma^e mod n equals DLPHash(m).", "output_hex": hex(recovered)},
+        ],
+    }
+
+
+@app.post("/pa16/elgamal")
+def pa16_elgamal(req: ElGamalDemoRequest) -> dict:
+    """PA#16 ElGamal encryption and malleability demo."""
+    from src.pa16_elgamal.elgamal import elgamal_keygen, Enc, Dec
+    from src.foundations.dlp_group import DEMO_PARAMS
+
+    group = DEMO_PARAMS
+    sk, pk = elgamal_keygen(group)
+    m = max(1, min(int(req.message or 5), group.p - 1))
+    c1, c2 = Enc(pk, m)
+    decrypted = Dec(sk, c1, c2)
+    c2_tampered = (2 * c2) % group.p
+    tampered_plain = Dec(sk, c1, c2_tampered)
+    return {
+        "status": "ok",
+        "group": {"p": group.p, "q": group.q, "g": group.g},
+        "public_key": {"y": pk.y},
+        "secret_key": {"x": sk.x},
+        "message": m,
+        "ciphertext": {"c1": c1, "c2": c2},
+        "decrypted": decrypted,
+        "tampered_ciphertext": {"c1": c1, "c2": c2_tampered},
+        "tampered_decrypted": tampered_plain,
+        "expected_tampered": (2 * m) % group.p,
+        "malleability_succeeds": tampered_plain == (2 * m) % group.p,
+        "steps": [
+            {"step": "KeyGen", "description": "Pick x and publish y = g^x mod p.", "output_hex": hex(pk.y)},
+            {"step": "Encrypt", "description": "Pick fresh r, output (c1=g^r, c2=m*y^r).", "output_hex": f"({hex(c1)}, {hex(c2)})"},
+            {"step": "Malleate", "description": "Replace c2 with 2*c2 mod p; plaintext doubles after decryption.", "output_hex": hex(c2_tampered)},
+        ],
+    }
+
+
+@app.post("/pa17/cca_pkc")
+def pa17_cca_pkc(req: CCAPKCDemoRequest) -> dict:
+    """PA#17 CCA-secure public-key encryption panel: signcrypt plus tamper rejection."""
+    from src.pa16_elgamal.elgamal import elgamal_keygen, Enc, Dec
+    from src.pa17_cca_pkc.cca_pkc import CCA_PKC_Enc, CCA_PKC_Dec, demo_lineage
+    from src.foundations.dlp_group import DEMO_PARAMS
+
+    group = DEMO_PARAMS
+    enc_sk, enc_pk = elgamal_keygen(group)
+    sign_pk, sign_sk = _rsa_demo_key(256, 65537)
+    hash_fn = _demo_dlp_hash(16)
+    message = (req.message or "launch=no").encode()
+    ce, sigma = CCA_PKC_Enc(enc_pk, sign_sk, message, hash_fn)
+    opened = CCA_PKC_Dec(enc_sk, sign_pk, ce, sigma, hash_fn)
+
+    c1, c2 = ce
+    tampered_c2 = bytearray(c2)
+    if req.tamper and tampered_c2:
+        tampered_c2[0] ^= 1
+    tampered_ce = (c1, bytes(tampered_c2))
+    tampered_opened = CCA_PKC_Dec(enc_sk, sign_pk, tampered_ce, sigma, hash_fn)
+
+    plain_m = 5
+    ec1, ec2 = Enc(enc_pk, plain_m)
+    malleated_plain = Dec(enc_sk, ec1, (2 * ec2) % group.p)
+    return {
+        "status": "ok",
+        "message_text": _safe_text(message),
+        "ciphertext": {"c1": c1, "c2_hex": c2.hex()},
+        "signature_hex": sigma.hex(),
+        "decrypted_text": _safe_text(opened or b""),
+        "accepted": opened == message,
+        "tampered_ciphertext": {"c1": tampered_ce[0], "c2_hex": tampered_ce[1].hex()},
+        "tampered_result": "rejected" if tampered_opened is None else _safe_text(tampered_opened),
+        "tamper_rejected": tampered_opened is None,
+        "elgamal_contrast": {
+            "message": plain_m,
+            "ciphertext": {"c1": ec1, "c2": ec2},
+            "tampered_decrypted": malleated_plain,
+            "malleability_succeeds": malleated_plain == (2 * plain_m) % group.p,
+        },
+        "lineage": demo_lineage(),
+    }
+
+
+@app.post("/pa18/ot")
+def pa18_ot(req: OTDemoRequest) -> dict:
+    """PA#18 1-of-2 oblivious transfer walkthrough."""
+    from src.pa18_ot.ot import OTReceiverStep1, OTSenderStep, OTReceiverStep2
+    from src.foundations.dlp_group import DEMO_PARAMS
+    from src.pa16_elgamal.elgamal import Dec
+
+    group = DEMO_PARAMS
+    b = 1 if int(req.choice or 0) else 0
+    m0 = _encode_ot_message(req.m0, group.p)
+    m1 = _encode_ot_message(req.m1, group.p)
+    pk0, pk1, state = OTReceiverStep1(b, group)
+    c0, c1 = OTSenderStep(pk0, pk1, m0, m1)
+    received = OTReceiverStep2(state, c0, c1)
+    other_cipher = c1 if b == 0 else c0
+    other_expected = m1 if b == 0 else m0
+    other_attempt = Dec(state["sk"], *other_cipher)
+    return {
+        "status": "ok",
+        "choice": b,
+        "messages": [
+            {"label": "m0", "text": req.m0, "encoded": m0},
+            {"label": "m1", "text": req.m1, "encoded": m1},
+        ],
+        "public_keys": {"pk0_y": pk0.y, "pk1_y": pk1.y, "honest_index": b},
+        "ciphertexts": {"c0": {"c1": c0[0], "c2": c0[1]}, "c1": {"c1": c1[0], "c2": c1[1]}},
+        "received": received,
+        "received_label": f"m{b}",
+        "correct": received == (m0 if b == 0 else m1),
+        "other_attempt": other_attempt,
+        "other_expected": other_expected,
+        "privacy_holds": other_attempt != other_expected,
+        "steps": [
+            {"step": "Receiver", "description": "Generate one real public key for the chosen branch and one fake-looking key."},
+            {"step": "Sender", "description": "Encrypt m0 under pk0 and m1 under pk1, without knowing which key is real."},
+            {"step": "Receiver opens one", "description": "Only the chosen ciphertext decrypts with the retained secret key."},
+        ],
+    }
+
+
+@app.post("/pa19/secure_and")
+def pa19_secure_and(req: SecureAndDemoRequest) -> dict:
+    """PA#19 secure AND/XOR/NOT gate panel."""
+    from src.pa19_secure_gates.secure_gates import AND, XOR, NOT, truth_table_test
+    from src.foundations.dlp_group import DEMO_PARAMS
+
+    a = 1 if int(req.a or 0) else 0
+    b = 1 if int(req.b or 0) else 0
+    and_result = AND(a, b, DEMO_PARAMS)
+    return {
+        "status": "ok",
+        "a": a,
+        "b": b,
+        "and_result": and_result,
+        "xor_result": XOR(a, b),
+        "not_a": NOT(a),
+        "expected_and": a & b,
+        "correct": and_result == (a & b),
+        "truth_tables": truth_table_test(DEMO_PARAMS)["truth_tables"],
+        "ot_messages": {"m0": 0, "m1": a, "choice": b, "meaning": "receiver obtains m_b = a*b"},
+        "lineage": "PA19 AND → PA18 OT → PA16 ElGamal → PA11 DH group",
+    }
+
+
+@app.post("/pa20/millionaire")
+def pa20_millionaire(req: MillionaireDemoRequest) -> dict:
+    """PA#20 millionaire comparison using the boolean-circuit MPC evaluator."""
+    from src.pa20_mpc.mpc import build_comparison_circuit, SecureEval
+    from src.foundations.dlp_group import DEMO_PARAMS
+
+    bits = max(2, min(int(req.bits or 4), 8))
+    limit = (1 << bits) - 1
+    alice = max(0, min(int(req.alice or 0), limit))
+    bob = max(0, min(int(req.bob or 0), limit))
+    alice_bits = _bits_msb(alice, bits)
+    bob_bits = _bits_msb(bob, bits)
+    circuit = build_comparison_circuit(bits)
+    output, meta = SecureEval(circuit, alice_bits, bob_bits, DEMO_PARAMS)
+    transcript = meta["transcript"][: min(24, len(meta["transcript"]))]
+    return {
+        "status": "ok",
+        "alice": alice,
+        "bob": bob,
+        "bits": bits,
+        "alice_bits": alice_bits,
+        "bob_bits": bob_bits,
+        "alice_greater": bool(output[0]),
+        "expected": alice > bob,
+        "correct": bool(output[0]) == (alice > bob),
+        "circuit": {"wires": circuit.n_wires, "gates": len(circuit.gates), "and_calls": meta["and_calls"]},
+        "transcript": transcript,
+        "transcript_truncated": len(meta["transcript"]) > len(transcript),
+        "lineage": "PA20 SecureEval → PA19 AND → PA18 OT → PA16 ElGamal",
+    }
+
+
 # ─── Column 2: Source → Target (BLACK-BOX — handle only) ─────
 @app.post("/reduce_primitive_to_target")
 def reduce_primitive_to_target(req: ReduceRequest) -> dict:
@@ -1423,4 +1672,7 @@ def root():
                           "/pa10/hmac_compare",
                           "/pa11/dh_exchange", "/pa12/rsa_determinism",
                           "/pa13/miller_rabin", "/pa14/hastad",
+                          "/pa15/signatures", "/pa16/elgamal",
+                          "/pa17/cca_pkc", "/pa18/ot",
+                          "/pa19/secure_and", "/pa20/millionaire",
                           "/clique_reductions"]}

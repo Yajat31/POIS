@@ -191,3 +191,57 @@ export async function runHastad({ message, use_padding = false }) {
   });
   return res.json();
 }
+
+export async function runSignatures({ message, tamper = true }) {
+  const res = await fetch(`${API_BASE}/pa15/signatures`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, tamper }),
+  });
+  return res.json();
+}
+
+export async function runElGamal({ message }) {
+  const res = await fetch(`${API_BASE}/pa16/elgamal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  return res.json();
+}
+
+export async function runCcaPkc({ message, tamper = true }) {
+  const res = await fetch(`${API_BASE}/pa17/cca_pkc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, tamper }),
+  });
+  return res.json();
+}
+
+export async function runOtDemo({ m0, m1, choice }) {
+  const res = await fetch(`${API_BASE}/pa18/ot`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ m0, m1, choice }),
+  });
+  return res.json();
+}
+
+export async function runSecureAnd({ a, b }) {
+  const res = await fetch(`${API_BASE}/pa19/secure_and`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ a, b }),
+  });
+  return res.json();
+}
+
+export async function runMillionaire({ alice, bob, bits }) {
+  const res = await fetch(`${API_BASE}/pa20/millionaire`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ alice, bob, bits }),
+  });
+  return res.json();
+}
