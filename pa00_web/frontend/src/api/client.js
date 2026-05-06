@@ -74,3 +74,39 @@ export async function submitCpaGuess({ challenge_id, guess }) {
   });
   return res.json();
 }
+
+export async function runModeAnimator({ mode, message, flip_enabled = true, flip_block, flip_byte, reuse_iv = false }) {
+  const res = await fetch(`${API_BASE}/pa04/mode_animator`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, message, flip_enabled, flip_block, flip_byte, reuse_iv }),
+  });
+  return res.json();
+}
+
+export async function startMacGame({ num_messages = 8 }) {
+  const res = await fetch(`${API_BASE}/pa05/mac_game_start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ num_messages }),
+  });
+  return res.json();
+}
+
+export async function submitMacForgery({ game_id, message, tag_hex }) {
+  const res = await fetch(`${API_BASE}/pa05/mac_forgery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ game_id, message, tag_hex }),
+  });
+  return res.json();
+}
+
+export async function runLengthExtension({ message, extension }) {
+  const res = await fetch(`${API_BASE}/pa05/length_extension`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, extension }),
+  });
+  return res.json();
+}

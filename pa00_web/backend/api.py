@@ -28,6 +28,7 @@ app = FastAPI(title="POIS Minicrypt Clique Explorer", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 CPA_CHALLENGES: dict[str, dict] = {}
+MAC_GAMES: dict[str, dict] = {}
 
 # ─── Primitive registry ───────────────────────────────────────
 PRIMITIVES = {
@@ -117,6 +118,26 @@ class CPAChallengeRequest(BaseModel):
 class CPAGuessRequest(BaseModel):
     challenge_id: str
     guess: int
+
+class ModeAnimatorRequest(BaseModel):
+    mode: str = "CBC"
+    message: str = "Block one demo!!Block two demo!!Block three demo"
+    flip_enabled: bool = True
+    flip_block: int = 0
+    flip_byte: int = 0
+    reuse_iv: bool = False
+
+class MACGameStartRequest(BaseModel):
+    num_messages: int = 8
+
+class MACForgeryRequest(BaseModel):
+    game_id: str
+    message: str
+    tag_hex: str
+
+class LengthExtensionRequest(BaseModel):
+    message: str = "amount=100&to=bob"
+    extension: str = "&admin=true"
 
 
 def _normalise_hex(value: str, fallback: str = "") -> str:
@@ -359,6 +380,18 @@ def _equalize_messages(m0: bytes, m1: bytes) -> tuple[bytes, bytes]:
     return m0.ljust(max_len, b" "), m1.ljust(max_len, b" ")
 
 
+def _xor_bytes_local(a: bytes, b: bytes) -> bytes:
+    return bytes(x ^ y for x, y in zip(a, b))
+
+
+def _blocks(data: bytes, size: int = 16) -> list[bytes]:
+    return [data[i : i + size] for i in range(0, len(data), size)]
+
+
+def _safe_text(data: bytes) -> str:
+    return data.decode("utf-8", errors="replace")
+
+
 @app.post("/pa03/cpa_challenge")
 def pa03_cpa_challenge(req: CPAChallengeRequest) -> dict:
     """PA#3 IND-CPA challenge. The hidden bit is stored until the user guesses."""
@@ -416,6 +449,215 @@ def pa03_cpa_guess(req: CPAGuessRequest) -> dict:
         "correct": correct,
         "reuse_nonce": challenge["reuse_nonce"],
         "chosen_message": challenge["m0"] if challenge["b"] == 0 else challenge["m1"],
+    }
+
+
+@app.post("/pa04/mode_animator")
+def pa04_mode_animator(req: ModeAnimatorRequest) -> dict:
+    """PA#4 CBC/OFB/CTR block-mode animator with bit-flip propagation data."""
+    from src.common.padding import pkcs7_pad
+    from src.common.bytes_utils import int_to_bytes, bytes_to_int
+    from src.foundations.aes_impl import aes_encrypt_block, aes_decrypt_block
+    from src.pa04_modes.modes import CBC_Dec, OFB_Dec, CTR_Dec
+
+    mode = (req.mode or "CBC").upper()
+    if mode not in {"CBC", "OFB", "CTR"}:
+        return {"status": "error", "message": "mode must be CBC, OFB, or CTR"}
+
+    key = bytes.fromhex("00112233445566778899aabbccddeeff")
+    iv = bytes.fromhex("0102030405060708090a0b0c0d0e0f10")
+    plaintext = (req.message or "").encode()
+    if mode == "CBC":
+        working_plaintext = pkcs7_pad(plaintext, 16)
+    else:
+        target_len = max(48, ((len(plaintext) + 15) // 16) * 16)
+        working_plaintext = plaintext.ljust(target_len, b" ")
+
+    steps = []
+    ciphertext = b""
+    previous = iv
+    for index, block in enumerate(_blocks(working_plaintext)):
+        if mode == "CBC":
+            aes_input = _xor_bytes_local(block, previous)
+            aes_output = aes_encrypt_block(key, aes_input)
+            c_block = aes_output
+            previous = c_block
+            step = {
+                "block": index,
+                "plain_hex": block.hex(),
+                "xor_with_hex": (iv if index == 0 else _blocks(ciphertext)[index - 1]).hex(),
+                "aes_input_hex": aes_input.hex(),
+                "cipher_hex": c_block.hex(),
+            }
+        elif mode == "OFB":
+            previous = aes_encrypt_block(key, previous)
+            c_block = _xor_bytes_local(block, previous[:len(block)])
+            step = {
+                "block": index,
+                "plain_hex": block.hex(),
+                "feedback_hex": previous.hex(),
+                "keystream_hex": previous[:len(block)].hex(),
+                "cipher_hex": c_block.hex(),
+            }
+        else:
+            counter = int_to_bytes((bytes_to_int(iv) + index) % (2**128), 16)
+            keystream = aes_encrypt_block(key, counter)
+            c_block = _xor_bytes_local(block, keystream[:len(block)])
+            step = {
+                "block": index,
+                "plain_hex": block.hex(),
+                "counter_hex": counter.hex(),
+                "keystream_hex": keystream[:len(block)].hex(),
+                "cipher_hex": c_block.hex(),
+            }
+        ciphertext += c_block
+        steps.append(step)
+
+    flipped = bytearray(ciphertext)
+    if req.flip_enabled:
+        flip_index = max(0, min(int(req.flip_block or 0), len(_blocks(ciphertext)) - 1)) * 16
+        flip_index += max(0, min(int(req.flip_byte or 0), 15))
+        if flip_index < len(flipped):
+            flipped[flip_index] ^= 1
+    flipped = bytes(flipped)
+
+    try:
+        if mode == "CBC":
+            decrypted = CBC_Dec(key, iv, flipped)
+        elif mode == "OFB":
+            decrypted = OFB_Dec(key, iv, flipped)
+        else:
+            decrypted = CTR_Dec(key, iv, flipped)
+    except Exception:
+        decrypted = b"<padding error after flip>"
+
+    original_compare = plaintext if mode == "CBC" else working_plaintext[:len(decrypted)]
+    diff_blocks = []
+    for index, (orig_block, dec_block) in enumerate(zip(_blocks(original_compare), _blocks(decrypted))):
+        diff_blocks.append({
+            "block": index,
+            "diff_bytes": sum(1 for a, b in zip(orig_block, dec_block) if a != b),
+            "decrypted_hex": dec_block.hex(),
+            "decrypted_text": _safe_text(dec_block),
+        })
+
+    reuse_demo = None
+    if mode == "CBC" and req.reuse_iv:
+        from src.pa04_modes.modes import CBC_Enc
+        m1 = b"same-first-block!!" + b" rest of first message"
+        m2 = b"same-first-block!!" + b" second message body"
+        c1 = CBC_Enc(key, iv, m1)
+        c2 = CBC_Enc(key, iv, m2)
+        reuse_demo = {
+            "c1_first_hex": c1[:16].hex(),
+            "c2_first_hex": c2[:16].hex(),
+            "match": c1[:16] == c2[:16],
+        }
+
+    return {
+        "status": "ok",
+        "mode": mode,
+        "key_hex": key.hex(),
+        "iv_or_nonce_hex": iv.hex(),
+        "ciphertext_hex": ciphertext.hex(),
+        "flipped_ciphertext_hex": flipped.hex(),
+        "flip": {
+            "enabled": bool(req.flip_enabled),
+            "block": int(req.flip_block or 0),
+            "byte": int(req.flip_byte or 0),
+            "bit": 0,
+        },
+        "steps": steps,
+        "diff_blocks": diff_blocks,
+        "reuse_demo": reuse_demo,
+        "analysis": {
+            "CBC": "A ciphertext bit flip corrupts the current plaintext block and flips the matching bit in the next block.",
+            "OFB": "A ciphertext bit flip changes only the matching plaintext bit.",
+            "CTR": "A ciphertext bit flip changes only the matching plaintext bit.",
+        }[mode],
+    }
+
+
+@app.post("/pa05/mac_game_start")
+def pa05_mac_game_start(req: MACGameStartRequest) -> dict:
+    from src.pa05_mac.mac import MacCBC
+
+    count = max(1, min(int(req.num_messages or 8), 50))
+    key = secrets.token_bytes(16)
+    mac = MacCBC()
+    signed = []
+    for i in range(count):
+        msg = f"oracle-message-{i:02d}".encode()
+        tag = mac.Mac(key, msg)
+        signed.append({"message": msg.decode(), "message_hex": msg.hex(), "tag_hex": tag.hex()})
+    game_id = secrets.token_hex(12)
+    MAC_GAMES[game_id] = {
+        "key": key,
+        "signed_messages": {item["message"] for item in signed},
+        "attempts": 0,
+        "successes": 0,
+    }
+    if len(MAC_GAMES) > 100:
+        for old_key in list(MAC_GAMES.keys())[:25]:
+            MAC_GAMES.pop(old_key, None)
+    return {"status": "ok", "game_id": game_id, "signed": signed, "attempts": 0, "successes": 0}
+
+
+@app.post("/pa05/mac_forgery")
+def pa05_mac_forgery(req: MACForgeryRequest) -> dict:
+    from src.pa05_mac.mac import MacCBC
+
+    game = MAC_GAMES.get(req.game_id)
+    if game is None:
+        return {"status": "error", "message": "Unknown game_id. Start a new MAC game."}
+    try:
+        tag = bytes.fromhex(_normalise_hex(req.tag_hex, ""))
+    except ValueError:
+        return {"status": "error", "message": "tag_hex must be valid hex"}
+    msg = (req.message or "").encode()
+    game["attempts"] += 1
+    fresh = req.message not in game["signed_messages"]
+    accepted = fresh and MacCBC().Vrfy(game["key"], msg, tag)
+    if accepted:
+        game["successes"] += 1
+    return {
+        "status": "ok",
+        "fresh_message": fresh,
+        "accepted": accepted,
+        "attempts": game["attempts"],
+        "successes": game["successes"],
+    }
+
+
+@app.post("/pa05/length_extension")
+def pa05_length_extension(req: LengthExtensionRequest) -> dict:
+    from src.pa05_mac.mac import naive_mac
+    from src.common.padding import iso7816_pad
+
+    key = b"hidden-demo-key!!"[:16]
+    message = (req.message or "").encode()
+    extension = (req.extension or "").encode()
+    original_tag = naive_mac(key, message)
+    glue_padding = iso7816_pad(key + message, 16)[len(key + message):]
+    padded_ext = iso7816_pad(extension, 16)
+    forged_tag = original_tag
+    for block in _blocks(padded_ext):
+        forged_tag = _xor_bytes_local(forged_tag, block)
+    extended_message = message + glue_padding + extension
+    actual_tag = naive_mac(key, extended_message)
+    return {
+        "status": "ok",
+        "message_text": _safe_text(message),
+        "extension_text": _safe_text(extension),
+        "glue_padding_hex": glue_padding.hex(),
+        "extended_message_display": f"{_safe_text(message)} || pad({glue_padding.hex()}) || {_safe_text(extension)}",
+        "message_hex": message.hex(),
+        "extension_hex": extension.hex(),
+        "original_tag_hex": original_tag.hex(),
+        "forged_tag_hex": forged_tag.hex(),
+        "actual_extended_tag_hex": actual_tag.hex(),
+        "attack_succeeds": forged_tag == actual_tag,
+        "extended_message_hex": extended_message.hex(),
     }
 
 
@@ -727,4 +969,6 @@ def root():
             "endpoints": ["/build_foundation_to_primitive", "/reduce_primitive_to_target",
                           "/pa01/prg_viewer", "/reduction_path", "/proof_summary",
                           "/pa02/ggm_tree", "/pa03/cpa_challenge", "/pa03/cpa_guess",
+                          "/pa04/mode_animator", "/pa05/mac_game_start",
+                          "/pa05/mac_forgery", "/pa05/length_extension",
                           "/clique_reductions"]}

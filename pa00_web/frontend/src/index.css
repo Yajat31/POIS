@@ -143,6 +143,11 @@ body {
   padding-bottom: 0.5rem;
 }
 
+.panel-title.subtle {
+  margin-top: 0.5rem;
+  color: var(--accent3);
+}
+
 /* ── Select ── */
 .select-wrapper { display: flex; flex-direction: column; gap: 0.3rem; }
 
@@ -348,10 +353,100 @@ body {
   color: #fecaca;
 }
 
+.segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segment {
+  background: transparent;
+  color: var(--text-muted);
+  border: 0;
+  border-right: 1px solid var(--border);
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.segment:last-child { border-right: 0; }
+
+.segment.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.block-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.block-card {
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  min-width: 0;
+}
+
+.block-card.changed {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 1px #f59e0b33;
+}
+
+.oracle-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.oracle-row {
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.oracle-row span {
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.oracle-row code {
+  color: #a5f3fc;
+  font-size: 0.68rem;
+  word-break: break-all;
+}
+
+.message-compare {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 0.75rem;
+}
+
+.message-text {
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  word-break: break-word;
+  margin-bottom: 0.35rem;
+}
+
 @media (max-width: 900px) {
   .main-columns,
   .demo-grid,
-  .test-grid {
+  .test-grid,
+  .block-grid,
+  .oracle-list,
+  .message-compare {
     grid-template-columns: 1fr;
   }
 
@@ -380,6 +475,20 @@ body {
   color: var(--text-muted);
   text-align: center;
   opacity: 0.75;
+}
+
+.info-card {
+  background: #0b1729;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.info-card strong {
+  color: var(--accent2);
 }
 
 /* ── Proof summary panel ── */

@@ -8,6 +8,10 @@ import {
   runGgmTree,
   startCpaChallenge,
   submitCpaGuess,
+  runModeAnimator,
+  startMacGame,
+  submitMacForgery,
+  runLengthExtension,
 } from "./api/client.js";
 
 const FOUNDATIONS = ["DLP", "AES"];
@@ -394,6 +398,259 @@ function CpaGamePanel() {
   );
 }
 
+function ModeAnimatorPanel() {
+  const [mode, setMode] = useState("CBC");
+  const [message, setMessage] = useState("Block one demo!!Block two demo!!Block three demo");
+  const [flipEnabled, setFlipEnabled] = useState(false);
+  const [flipBlock, setFlipBlock] = useState(0);
+  const [flipByte, setFlipByte] = useState(0);
+  const [reuseIv, setReuseIv] = useState(false);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchMode = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runModeAnimator({
+        mode,
+        message,
+        flip_enabled: flipEnabled,
+        flip_block: flipBlock,
+        flip_byte: flipByte,
+        reuse_iv: reuseIv,
+      }));
+    } catch (e) {
+      setResult({ status: "error", message: String(e) });
+    } finally {
+      setLoading(false);
+    }
+  }, [mode, message, flipEnabled, flipBlock, flipByte, reuseIv]);
+
+  useEffect(() => {
+    const id = setTimeout(fetchMode, 180);
+    return () => clearTimeout(id);
+  }, [fetchMode]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#4 — CBC/OFB/CTR Block-Mode Animator</div>
+      <div className="segmented">
+        {["CBC", "OFB", "CTR"].map((item) => (
+          <button key={item} className={`segment ${mode === item ? "active" : ""}`} onClick={() => setMode(item)}>
+            {item}
+          </button>
+        ))}
+      </div>
+      <div className="demo-grid three">
+        <div className="input-wrapper">
+          <label className="select-label">Plaintext</label>
+          <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Flip Block: {flipBlock}</label>
+          <input className="styled-range" type="range" min="0" max="2" value={flipBlock} onChange={(e) => setFlipBlock(Number(e.target.value))} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Flip Byte: {flipByte}</label>
+          <input className="styled-range" type="range" min="0" max="15" value={flipByte} onChange={(e) => setFlipByte(Number(e.target.value))} />
+        </div>
+      </div>
+      <label className="toggle-line">
+        <input type="checkbox" checked={flipEnabled} onChange={(e) => setFlipEnabled(e.target.checked)} />
+        Flip one ciphertext bit
+      </label>
+      {mode === "CBC" && (
+        <label className="toggle-line">
+          <input type="checkbox" checked={reuseIv} onChange={(e) => setReuseIv(e.target.checked)} />
+          Reuse IV demo
+        </label>
+      )}
+
+      {result?.status === "error" && <StubCard message={result.message} />}
+      {result?.status === "ok" && (
+        <>
+          <div className="metric-row">
+            <span className="tag tag-ok">{result.mode}</span>
+            <span className="tag tag-stub">IV/nonce {result.iv_or_nonce_hex}</span>
+          </div>
+          <div className="block-grid">
+            {result.steps.slice(0, 3).map((step) => (
+              <div key={step.block} className="block-card">
+                <div className="step-title">Block {step.block}</div>
+                <div className="step-desc">M: {step.plain_hex}</div>
+                {step.xor_with_hex && <div className="step-desc">xor: {step.xor_with_hex}</div>}
+                {step.counter_hex && <div className="step-desc">ctr: {step.counter_hex}</div>}
+                {step.feedback_hex && <div className="step-desc">ofb: {step.feedback_hex}</div>}
+                {step.keystream_hex && <div className="step-desc">ks: {step.keystream_hex}</div>}
+                {step.aes_input_hex && <div className="step-desc">AES in: {step.aes_input_hex}</div>}
+                <div className="step-value">C: {step.cipher_hex}</div>
+              </div>
+            ))}
+          </div>
+          <div className="step-item">
+            <div className="step-title">{result.flip.enabled ? "Bit Flip Propagation" : "Clean Decryption"}</div>
+            <div className="step-desc">
+              {result.flip.enabled ? result.analysis : "No ciphertext bit is flipped, so decryption should recover the original plaintext blocks."}
+            </div>
+          </div>
+          <div className="block-grid">
+            {result.diff_blocks.slice(0, 3).map((block) => (
+              <div key={block.block} className={`block-card ${block.diff_bytes ? "changed" : ""}`}>
+                <div className="step-title">Plaintext block {block.block}</div>
+                <div className="step-desc">changed bytes: {block.diff_bytes}</div>
+                <div className="step-value">{block.decrypted_text}</div>
+              </div>
+            ))}
+          </div>
+          {result.reuse_demo && (
+            <div className={`result-banner ${result.reuse_demo.match ? "fail" : "pass"}`}>
+              CBC IV reuse: first ciphertext blocks {result.reuse_demo.match ? "match" : "differ"}.
+            </div>
+          )}
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function MacGamePanel() {
+  const [game, setGame] = useState(null);
+  const [message, setMessage] = useState("new-message");
+  const [tagHex, setTagHex] = useState("00");
+  const [forgery, setForgery] = useState(null);
+  const [leMessage, setLeMessage] = useState("amount=100&to=bob");
+  const [extension, setExtension] = useState("&admin=true");
+  const [lengthResult, setLengthResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const startGame = useCallback(async () => {
+    setLoading(true);
+    setForgery(null);
+    try {
+      setGame(await startMacGame({ num_messages: 8 }));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    startGame();
+  }, [startGame]);
+
+  const submitForgery = useCallback(async () => {
+    if (!game?.game_id) return;
+    setLoading(true);
+    try {
+      setForgery(await submitMacForgery({ game_id: game.game_id, message, tag_hex: tagHex }));
+    } finally {
+      setLoading(false);
+    }
+  }, [game, message, tagHex]);
+
+  const runExtension = useCallback(async () => {
+    setLoading(true);
+    try {
+      setLengthResult(await runLengthExtension({ message: leMessage, extension }));
+    } finally {
+      setLoading(false);
+    }
+  }, [leMessage, extension]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#5 — MAC Forgery Game</div>
+      <div className="info-card">
+        <strong>CBC-MAC forgery game:</strong> the signed messages below are oracle queries under a hidden key.
+        The textbox lets you play the attacker: submit a new message and a guessed tag.
+        Success means producing a valid tag for a message that was not already signed.
+      </div>
+      <div className="metric-row">
+        <button className="action-btn" onClick={startGame} disabled={loading}>New MAC Game</button>
+        {game?.status === "ok" && <span className="tag tag-stub">{game.signed.length} oracle tags</span>}
+        {forgery?.status === "ok" && <span className="tag tag-stub">attempts {forgery.attempts}, successes {forgery.successes}</span>}
+      </div>
+      {game?.status === "ok" && (
+        <div className="oracle-list">
+          {game.signed.map((item) => (
+            <div key={item.message} className="oracle-row">
+              <span>{item.message}</span>
+              <code>{item.tag_hex}</code>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Fresh message m*</label>
+          <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Tag t* (hex)</label>
+          <input className="styled-input" value={tagHex} onChange={(e) => setTagHex(e.target.value)} />
+        </div>
+      </div>
+      <button className="action-btn" onClick={submitForgery} disabled={loading || !game?.game_id}>Submit Forgery</button>
+      {forgery?.status === "ok" && (
+        <div className={`result-banner ${forgery.accepted ? "pass" : "fail"}`}>
+          {forgery.accepted ? "Forgery accepted" : "Forgery rejected"}.
+          {!forgery.fresh_message ? " The message was already signed." : ""}
+        </div>
+      )}
+
+      <div className="panel-title subtle">Length-Extension Demo</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Message</label>
+          <input className="styled-input text-input" value={leMessage} onChange={(e) => setLeMessage(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Suffix</label>
+          <input className="styled-input text-input" value={extension} onChange={(e) => setExtension(e.target.value)} />
+        </div>
+      </div>
+      <button className="action-btn" onClick={runExtension} disabled={loading}>Run Extension</button>
+      {lengthResult?.status === "ok" && (
+        <>
+          <div className="message-compare">
+            <div className="block-card">
+              <div className="step-title">Original message</div>
+              <div className="message-text">{lengthResult.message_text}</div>
+              <div className="step-value">{lengthResult.message_hex}</div>
+            </div>
+            <div className="block-card changed">
+              <div className="step-title">Extended message</div>
+              <div className="step-desc">Readable formula, not literal text to paste into the secure MAC game</div>
+              <div className="message-text">{lengthResult.extended_message_display}</div>
+              <div className="step-desc">exact bytes</div>
+              <div className="step-value">{lengthResult.extended_message_hex}</div>
+            </div>
+          </div>
+          <div className={`result-banner ${lengthResult.attack_succeeds ? "pass" : "fail"}`}>
+            {lengthResult.attack_succeeds
+              ? "Naive H(k || m) accepts the forged tag for the extended message. The secure CBC-MAC game above should still reject it."
+              : "The length-extension forgery did not verify for this toy hash run."}
+          </div>
+          <div className="block-grid">
+            <div className="block-card">
+              <div className="step-title">Original tag</div>
+              <div className="step-value">{lengthResult.original_tag_hex}</div>
+            </div>
+            <div className="block-card">
+              <div className="step-title">Forged tag</div>
+              <div className="step-value">{lengthResult.forged_tag_hex}</div>
+            </div>
+            <div className={`block-card ${lengthResult.attack_succeeds ? "changed" : ""}`}>
+              <div className="step-title">Actual extended tag</div>
+              <div className="step-value">{lengthResult.actual_extended_tag_hex}</div>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function ReducePanel({ srcHandle, srcPrimitive, onTargetChange }) {
   const [tgtPrimitive, setTgtPrimitive] = useState("MAC");
   const [queryHex, setQueryHex] = useState("0102030405060708090a0b0c0d0e0f10");
@@ -601,6 +858,8 @@ export default function App() {
       <PrgViewerPanel />
       <GgmTreePanel />
       <CpaGamePanel />
+      <ModeAnimatorPanel />
+      <MacGamePanel />
 
       <ProofSummaryPanel
         srcPrimitive={srcPrimitive}
