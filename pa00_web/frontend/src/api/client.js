@@ -47,3 +47,30 @@ export async function runPrgViewer({ seed_hex, length_bytes, run_tests = false }
   });
   return res.json();
 }
+
+export async function runGgmTree({ key_hex, query_bits, depth }) {
+  const res = await fetch(`${API_BASE}/pa02/ggm_tree`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key_hex, query_bits, depth }),
+  });
+  return res.json();
+}
+
+export async function startCpaChallenge({ m0, m1, reuse_nonce = false }) {
+  const res = await fetch(`${API_BASE}/pa03/cpa_challenge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ m0, m1, reuse_nonce }),
+  });
+  return res.json();
+}
+
+export async function submitCpaGuess({ challenge_id, guess }) {
+  const res = await fetch(`${API_BASE}/pa03/cpa_guess`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challenge_id, guess }),
+  });
+  return res.json();
+}

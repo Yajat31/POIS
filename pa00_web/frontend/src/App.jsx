@@ -5,6 +5,9 @@ import {
   getReductionPath,
   getProofSummary,
   runPrgViewer,
+  runGgmTree,
+  startCpaChallenge,
+  submitCpaGuess,
 } from "./api/client.js";
 
 const FOUNDATIONS = ["DLP", "AES"];
@@ -208,6 +211,181 @@ function PrgViewerPanel() {
                   {test.note && <div className="step-desc">{test.note}</div>}
                 </div>
               ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function GgmTreePanel() {
+  const [keyHex, setKeyHex] = useState("deadbeef1234abcd");
+  const [queryBits, setQueryBits] = useState("1011");
+  const [depth, setDepth] = useState(4);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchTree = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runGgmTree({ key_hex: keyHex, query_bits: queryBits, depth }));
+    } catch (e) {
+      setResult({ status: "error", message: String(e) });
+    } finally {
+      setLoading(false);
+    }
+  }, [keyHex, queryBits, depth]);
+
+  useEffect(() => {
+    const id = setTimeout(fetchTree, 180);
+    return () => clearTimeout(id);
+  }, [fetchTree]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#2 — GGM Tree Visualizer</div>
+      <div className="demo-grid three">
+        <div className="input-wrapper">
+          <label className="select-label">Key k (hex)</label>
+          <input className="styled-input" value={keyHex} onChange={(e) => setKeyHex(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Query x (bits)</label>
+          <input
+            className="styled-input"
+            value={queryBits}
+            onChange={(e) => setQueryBits(e.target.value.replace(/[^01]/g, "").slice(0, 8))}
+          />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Depth: {depth}</label>
+          <input className="styled-range" type="range" min="1" max="8" value={depth} onChange={(e) => setDepth(Number(e.target.value))} />
+        </div>
+      </div>
+
+      {result?.status === "error" && <StubCard message={result.message} />}
+      {result?.status === "ok" && (
+        <>
+          <div className="metric-row">
+            <span className="tag tag-ok">F_k({result.query_bits}) = {result.output_hex}</span>
+            <span className="tag tag-stub">depth {result.depth}</span>
+          </div>
+          <div className="tree-viewport">
+            {result.rows.map((row) => (
+              <div key={row[0]?.level ?? "row"} className="tree-row">
+                {row.map((node) => (
+                  <div key={node.id} className={`tree-node ${node.active ? "active" : ""}`}>
+                    <div className="tree-label">L{node.level} · {node.index}</div>
+                    <div className="tree-value">{node.state_hex}</div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="steps-container">
+            {result.path.slice(0, -1).map((step) => (
+              <div key={step.level} className="step-item">
+                <div className="step-title">Level {step.level}: bit {step.bit}</div>
+                <div className="step-desc">G0 = {step.G0_hex}, G1 = {step.G1_hex}</div>
+                <div className="step-value">chosen: {step.chosen_hex}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function CpaGamePanel() {
+  const [m0, setM0] = useState("attack at dawn");
+  const [m1, setM1] = useState("retreat now!!");
+  const [reuseNonce, setReuseNonce] = useState(false);
+  const [challenge, setChallenge] = useState(null);
+  const [lastGuess, setLastGuess] = useState(null);
+  const [stats, setStats] = useState({ rounds: 0, wins: 0 });
+  const [loading, setLoading] = useState(false);
+
+  const startRound = useCallback(async () => {
+    setLoading(true);
+    setLastGuess(null);
+    try {
+      setChallenge(await startCpaChallenge({ m0, m1, reuse_nonce: reuseNonce }));
+    } catch (e) {
+      setChallenge({ status: "error", message: String(e) });
+    } finally {
+      setLoading(false);
+    }
+  }, [m0, m1, reuseNonce]);
+
+  const guess = useCallback(async (value) => {
+    if (!challenge?.challenge_id) return;
+    setLoading(true);
+    try {
+      const result = await submitCpaGuess({ challenge_id: challenge.challenge_id, guess: value });
+      setLastGuess(result);
+      if (result.status === "ok") {
+        setStats((s) => ({ rounds: s.rounds + 1, wins: s.wins + (result.correct ? 1 : 0) }));
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [challenge]);
+
+  const winRate = stats.rounds ? stats.wins / stats.rounds : 0;
+  const advantage = stats.rounds ? Math.abs(winRate - 0.5) : 0;
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#3 — IND-CPA Game</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">m0</label>
+          <input className="styled-input text-input" value={m0} onChange={(e) => setM0(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">m1</label>
+          <input className="styled-input text-input" value={m1} onChange={(e) => setM1(e.target.value)} />
+        </div>
+      </div>
+      <label className="toggle-line">
+        <input type="checkbox" checked={reuseNonce} onChange={(e) => setReuseNonce(e.target.checked)} />
+        Reuse nonce
+      </label>
+      <button className="action-btn" onClick={startRound} disabled={loading}>
+        {loading && !challenge ? <span className="spinner" /> : "Encrypt Challenge"}
+      </button>
+
+      {challenge?.status === "error" && <StubCard message={challenge.message} />}
+      {challenge?.status === "ok" && (
+        <>
+          <div className="metric-row">
+            <span className="tag tag-ok">{challenge.scheme}</span>
+            <span className="tag tag-stub">rounds {stats.rounds}</span>
+            <span className="tag tag-stub">advantage {advantage.toFixed(2)}</span>
+          </div>
+          <div className="step-item">
+            <div className="step-title">C*</div>
+            <div className="step-desc">nonce: {challenge.nonce_hex}</div>
+            <div className="step-value">{challenge.ciphertext_hex}</div>
+          </div>
+          {challenge.reference_ciphertext_hex && (
+            <div className="step-item">
+              <div className="step-title">Reference Enc(m0)</div>
+              <div className="step-value">{challenge.reference_ciphertext_hex}</div>
+            </div>
+          )}
+          {!lastGuess && (
+            <div className="button-row">
+              <button className="action-btn" onClick={() => guess(0)} disabled={loading}>Guess m0</button>
+              <button className="action-btn" onClick={() => guess(1)} disabled={loading}>Guess m1</button>
+            </div>
+          )}
+          {lastGuess?.status === "ok" && (
+            <div className={`result-banner ${lastGuess.correct ? "pass" : "fail"}`}>
+              Guess {lastGuess.guess}; hidden b was {lastGuess.b}. {lastGuess.correct ? "Correct" : "Incorrect"}.
             </div>
           )}
         </>
@@ -421,6 +599,8 @@ export default function App() {
       </div>
 
       <PrgViewerPanel />
+      <GgmTreePanel />
+      <CpaGamePanel />
 
       <ProofSummaryPanel
         srcPrimitive={srcPrimitive}

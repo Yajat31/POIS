@@ -17,6 +17,7 @@ Endpoints:
 
 from __future__ import annotations
 import sys, os
+import secrets
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from fastapi import FastAPI, HTTPException
@@ -26,6 +27,7 @@ from pydantic import BaseModel
 app = FastAPI(title="POIS Minicrypt Clique Explorer", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
+CPA_CHALLENGES: dict[str, dict] = {}
 
 # ─── Primitive registry ───────────────────────────────────────
 PRIMITIVES = {
@@ -101,6 +103,20 @@ class PRGViewerRequest(BaseModel):
     seed_hex: str = ""
     length_bytes: int = 32
     run_tests: bool = False
+
+class GGMTreeRequest(BaseModel):
+    key_hex: str = ""
+    query_bits: str = "1011"
+    depth: int = 4
+
+class CPAChallengeRequest(BaseModel):
+    m0: str = ""
+    m1: str = ""
+    reuse_nonce: bool = False
+
+class CPAGuessRequest(BaseModel):
+    challenge_id: str
+    guess: int
 
 
 def _normalise_hex(value: str, fallback: str = "") -> str:
@@ -260,6 +276,146 @@ def pa01_prg_viewer(req: PRGViewerRequest) -> dict:
                 "output_hex": output.hex(),
             },
         ],
+    }
+
+
+def _hex_or_none(value: int | None) -> str | None:
+    return hex(value) if value is not None else None
+
+
+@app.post("/pa02/ggm_tree")
+def pa02_ggm_tree(req: GGMTreeRequest) -> dict:
+    """PA#2 GGM tree visualizer: tree nodes, highlighted query path, and output."""
+    depth = max(1, min(int(req.depth or 4), 8))
+    query_bits = "".join(bit for bit in (req.query_bits or "") if bit in "01")
+    query_bits = (query_bits + "0" * depth)[:depth]
+    val = _normalise_hex(req.key_hex, "00" * 8)
+    try:
+        key_bytes = bytes.fromhex(val)
+    except ValueError:
+        return {"status": "error", "message": "key_hex must be valid hex"}
+
+    from src.pa02_prf.ggm_prf import GGMPRF
+    from src.common.bytes_utils import bytes_to_int
+
+    ggm = GGMPRF(output_bits=32)
+    key = bytes_to_int(key_bytes) % ggm.owf.q or 1
+    active_by_level = {0: 0}
+    idx = 0
+    for level, bit in enumerate(query_bits, start=1):
+        idx = idx * 2 + int(bit)
+        active_by_level[level] = idx
+
+    rows = []
+    frontier = [(0, key)]
+    for level in range(depth + 1):
+        row = []
+        next_frontier = []
+        for node_index, state in frontier:
+            node = {
+                "id": f"{level}-{node_index}",
+                "level": level,
+                "index": node_index,
+                "state": state,
+                "state_hex": hex(state),
+                "active": active_by_level.get(level) == node_index,
+            }
+            if level < depth:
+                left, right = ggm._G(state)
+                node["G0_hex"] = hex(left)
+                node["G1_hex"] = hex(right)
+                next_frontier.append((node_index * 2, left))
+                next_frontier.append((node_index * 2 + 1, right))
+            row.append(node)
+        rows.append(row)
+        frontier = next_frontier
+
+    path = ggm.highlighted_path(key, [int(bit) for bit in query_bits])
+    output = path[-1]["state"]
+    return {
+        "status": "ok",
+        "key": key,
+        "key_hex": hex(key),
+        "query_bits": query_bits,
+        "depth": depth,
+        "output_hex": hex(output),
+        "rows": rows,
+        "path": [
+            {
+                "level": item["level"],
+                "bit": item.get("bit"),
+                "state_hex": hex(item["state"]),
+                "G0_hex": _hex_or_none(item.get("G0")),
+                "G1_hex": _hex_or_none(item.get("G1")),
+                "chosen_hex": _hex_or_none(item.get("chosen")) or hex(item["state"]),
+            }
+            for item in path
+        ],
+    }
+
+
+def _equalize_messages(m0: bytes, m1: bytes) -> tuple[bytes, bytes]:
+    max_len = max(len(m0), len(m1), 1)
+    return m0.ljust(max_len, b" "), m1.ljust(max_len, b" ")
+
+
+@app.post("/pa03/cpa_challenge")
+def pa03_cpa_challenge(req: CPAChallengeRequest) -> dict:
+    """PA#3 IND-CPA challenge. The hidden bit is stored until the user guesses."""
+    from src.pa03_cpa_enc.cpa_enc import Enc, broken_enc
+
+    m0, m1 = _equalize_messages(req.m0.encode(), req.m1.encode())
+    key = secrets.token_bytes(16)
+    b = secrets.randbelow(2)
+    chosen = m0 if b == 0 else m1
+    if req.reuse_nonce:
+        nonce, ciphertext = broken_enc(key, chosen)
+        ref_nonce, ref_ciphertext = broken_enc(key, m0)
+    else:
+        nonce, ciphertext = Enc(key, chosen)
+        ref_nonce, ref_ciphertext = None, None
+
+    challenge_id = secrets.token_hex(12)
+    CPA_CHALLENGES[challenge_id] = {
+        "b": b,
+        "reuse_nonce": req.reuse_nonce,
+        "m0": m0.decode(errors="replace"),
+        "m1": m1.decode(errors="replace"),
+    }
+    if len(CPA_CHALLENGES) > 200:
+        for old_key in list(CPA_CHALLENGES.keys())[:50]:
+            CPA_CHALLENGES.pop(old_key, None)
+
+    return {
+        "status": "ok",
+        "challenge_id": challenge_id,
+        "scheme": "BROKEN nonce reuse" if req.reuse_nonce else "SECURE fresh nonce",
+        "nonce_hex": nonce.hex(),
+        "ciphertext_hex": ciphertext.hex(),
+        "reference_ciphertext_hex": ref_ciphertext.hex() if ref_ciphertext else None,
+        "reference_nonce_hex": ref_nonce.hex() if ref_nonce else None,
+        "steps": [
+            {"step": "Challenge bit", "description": "The challenger samples hidden b in {0,1}."},
+            {"step": "Encrypt mb", "description": "Compute C* = Enc_k(m_b).", "output_hex": ciphertext.hex()},
+            {"step": "Nonce", "description": "Fresh in secure mode; fixed at 0^128 in reuse-nonce mode.", "output_hex": nonce.hex()},
+        ],
+    }
+
+
+@app.post("/pa03/cpa_guess")
+def pa03_cpa_guess(req: CPAGuessRequest) -> dict:
+    challenge = CPA_CHALLENGES.pop(req.challenge_id, None)
+    if challenge is None:
+        return {"status": "error", "message": "Unknown or already-used challenge_id"}
+    guess = 1 if int(req.guess) else 0
+    correct = guess == challenge["b"]
+    return {
+        "status": "ok",
+        "guess": guess,
+        "b": challenge["b"],
+        "correct": correct,
+        "reuse_nonce": challenge["reuse_nonce"],
+        "chosen_message": challenge["m0"] if challenge["b"] == 0 else challenge["m1"],
     }
 
 
@@ -570,4 +726,5 @@ def root():
     return {"service": "POIS Minicrypt Clique Explorer v2", "primitives": list(PRIMITIVES.keys()),
             "endpoints": ["/build_foundation_to_primitive", "/reduce_primitive_to_target",
                           "/pa01/prg_viewer", "/reduction_path", "/proof_summary",
+                          "/pa02/ggm_tree", "/pa03/cpa_challenge", "/pa03/cpa_guess",
                           "/clique_reductions"]}
