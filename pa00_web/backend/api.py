@@ -139,6 +139,14 @@ class LengthExtensionRequest(BaseModel):
     message: str = "amount=100&to=bob"
     extension: str = "&admin=true"
 
+class CCAMalleabilityRequest(BaseModel):
+    message: str = "transfer=100&to=bob"
+    flip_byte: int = 0
+
+class MDChainRequest(BaseModel):
+    message: str = "Merkle-Damgard demo"
+    block_size: int = 16
+
 
 def _normalise_hex(value: str, fallback: str = "") -> str:
     val = (value or "").strip() or fallback
@@ -658,6 +666,100 @@ def pa05_length_extension(req: LengthExtensionRequest) -> dict:
         "actual_extended_tag_hex": actual_tag.hex(),
         "attack_succeeds": forged_tag == actual_tag,
         "extended_message_hex": extended_message.hex(),
+    }
+
+
+@app.post("/pa06/cca_malleability")
+def pa06_cca_malleability(req: CCAMalleabilityRequest) -> dict:
+    """PA#6 contrast: CPA bit-flip malleability vs CCA Encrypt-then-MAC rejection."""
+    from src.pa03_cpa_enc.cpa_enc import Enc, Dec
+    from src.pa06_cca_enc.cca_enc import CCAEnc
+
+    key_enc = bytes.fromhex("00112233445566778899aabbccddeeff")
+    key_mac = bytes.fromhex("0f0e0d0c0b0a09080706050403020100")
+    message = (req.message or "").encode()
+    flip_byte = max(0, int(req.flip_byte or 0))
+
+    nonce, cpa_cipher = Enc(key_enc, message)
+    cpa_tampered = bytearray(cpa_cipher)
+    if cpa_tampered:
+        cpa_tampered[min(flip_byte, len(cpa_tampered) - 1)] ^= 1
+    cpa_tampered = bytes(cpa_tampered)
+    try:
+        cpa_plain = Dec(key_enc, nonce, cpa_tampered)
+        cpa_result = {"status": "decrypted", "plaintext_text": _safe_text(cpa_plain), "plaintext_hex": cpa_plain.hex()}
+    except Exception as exc:
+        cpa_result = {"status": "decryption_error", "error": str(exc)}
+
+    cca = CCAEnc()
+    packed_c, tag = cca.CCA_Enc(key_enc, key_mac, message)
+    cca_tampered = bytearray(packed_c)
+    if cca_tampered:
+        cca_tampered[min(flip_byte, len(cca_tampered) - 1)] ^= 1
+    cca_tampered = bytes(cca_tampered)
+    expected_tampered_tag = cca.mac.Mac(key_mac, cca_tampered)
+    cca_plain = cca.CCA_Dec(key_enc, key_mac, cca_tampered, tag)
+
+    return {
+        "status": "ok",
+        "message_text": _safe_text(message),
+        "flip_byte": flip_byte,
+        "cpa": {
+            "nonce_hex": nonce.hex(),
+            "ciphertext_hex": cpa_cipher.hex(),
+            "tampered_ciphertext_hex": cpa_tampered.hex(),
+            "result": cpa_result,
+        },
+        "cca": {
+            "packed_ciphertext_hex": packed_c.hex(),
+            "tag_hex": tag.hex(),
+            "tampered_ciphertext_hex": cca_tampered.hex(),
+            "expected_tampered_tag_hex": expected_tampered_tag.hex(),
+            "mac_valid": tag == expected_tampered_tag,
+            "result": "⊥" if cca_plain is None else _safe_text(cca_plain),
+        },
+        "steps": [
+            {"step": "CPA-only", "description": "Flip one ciphertext bit and decrypt anyway.", "output_hex": cpa_tampered.hex()},
+            {"step": "CCA Encrypt-then-MAC", "description": "Verify tag over ciphertext before decrypting.", "output_hex": tag.hex()},
+            {"step": "Tamper check", "description": "The old tag no longer matches the tampered ciphertext, so decryption returns ⊥."},
+        ],
+    }
+
+
+@app.post("/pa07/md_chain")
+def pa07_md_chain(req: MDChainRequest) -> dict:
+    """PA#7 Merkle-Damgard chain viewer using the PA#7 XOR compression demo."""
+    from src.common.padding import md_pad
+    from src.pa07_merkle_damgard.merkle_damgard import make_xor_hash, demo_collision_propagation
+
+    block_size = max(9, min(int(req.block_size or 16), 64))
+    message = (req.message or "").encode()
+    hash_fn = make_xor_hash(digest_bytes=16, block_size=block_size)
+    padded = md_pad(message, block_size)
+    state = hash_fn.iv
+    trace = []
+    for index, block in enumerate(_blocks(padded, block_size)):
+        previous = state
+        state = hash_fn.compress(state, block)
+        trace.append({
+            "block": index,
+            "block_hex": block.hex(),
+            "block_text": _safe_text(block),
+            "prev_state_hex": previous.hex(),
+            "next_state_hex": state.hex(),
+        })
+    collision = demo_collision_propagation(hash_fn)
+    return {
+        "status": "ok",
+        "message_text": _safe_text(message),
+        "message_hex": message.hex(),
+        "block_size": block_size,
+        "iv_hex": hash_fn.iv.hex(),
+        "padded_hex": padded.hex(),
+        "padding_hex": padded[len(message):].hex(),
+        "digest_hex": state.hex(),
+        "trace": trace,
+        "collision_demo": collision,
     }
 
 

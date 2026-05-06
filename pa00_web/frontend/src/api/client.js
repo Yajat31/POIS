@@ -110,3 +110,21 @@ export async function runLengthExtension({ message, extension }) {
   });
   return res.json();
 }
+
+export async function runCcaMalleability({ message, flip_byte }) {
+  const res = await fetch(`${API_BASE}/pa06/cca_malleability`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, flip_byte }),
+  });
+  return res.json();
+}
+
+export async function runMdChain({ message, block_size }) {
+  const res = await fetch(`${API_BASE}/pa07/md_chain`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, block_size }),
+  });
+  return res.json();
+}

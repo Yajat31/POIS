@@ -12,6 +12,8 @@ import {
   startMacGame,
   submitMacForgery,
   runLengthExtension,
+  runCcaMalleability,
+  runMdChain,
 } from "./api/client.js";
 
 const FOUNDATIONS = ["DLP", "AES"];
@@ -651,6 +653,127 @@ function MacGamePanel() {
   );
 }
 
+function CcaMalleabilityPanel() {
+  const [message, setMessage] = useState("transfer=100&to=bob");
+  const [flipByte, setFlipByte] = useState(0);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runCcaMalleability({ message, flip_byte: flipByte }));
+    } finally {
+      setLoading(false);
+    }
+  }, [message, flipByte]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#6 — CPA Malleability vs CCA Encrypt-then-MAC</div>
+      <div className="info-card">
+        CPA encryption hides the message but still lets ciphertext edits flow into decryption.
+        Encrypt-then-MAC authenticates the ciphertext first, so the same edit returns ⊥.
+      </div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Plaintext</label>
+          <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Flip Byte: {flipByte}</label>
+          <input className="styled-range" type="range" min="0" max="31" value={flipByte} onChange={(e) => setFlipByte(Number(e.target.value))} />
+        </div>
+      </div>
+      {result?.status === "ok" && (
+        <div className="compare-grid">
+          <div className="block-card changed">
+            <div className="step-title">CPA-only</div>
+            <div className="step-desc">tampered ciphertext still reaches decryption</div>
+            <div className="step-value">{result.cpa.tampered_ciphertext_hex}</div>
+            <div className="message-text">
+              {result.cpa.result.status === "decrypted" ? result.cpa.result.plaintext_text : result.cpa.result.error}
+            </div>
+          </div>
+          <div className="block-card">
+            <div className="step-title">CCA: Encrypt-then-MAC</div>
+            <div className="step-desc">tag valid after tamper? {String(result.cca.mac_valid)}</div>
+            <div className="step-value">{result.cca.tag_hex}</div>
+            <div className="result-banner fail">Decryption output: {result.cca.result}</div>
+          </div>
+        </div>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
+function MerkleDamgardPanel() {
+  const [message, setMessage] = useState("Merkle-Damgard demo");
+  const [blockSize, setBlockSize] = useState(16);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    try {
+      setResult(await runMdChain({ message, block_size: blockSize }));
+    } finally {
+      setLoading(false);
+    }
+  }, [message, blockSize]);
+
+  useEffect(() => {
+    const id = setTimeout(runDemo, 180);
+    return () => clearTimeout(id);
+  }, [runDemo]);
+
+  return (
+    <section className="demo-panel">
+      <div className="panel-title">PA#7 — Merkle-Damgard Chain Viewer</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Message</label>
+          <input className="styled-input text-input" value={message} onChange={(e) => setMessage(e.target.value)} />
+        </div>
+        <div className="input-wrapper">
+          <label className="select-label">Block Size: {blockSize}</label>
+          <input className="styled-range" type="range" min="9" max="64" value={blockSize} onChange={(e) => setBlockSize(Number(e.target.value))} />
+        </div>
+      </div>
+      {result?.status === "ok" && (
+        <>
+          <div className="metric-row">
+            <span className="tag tag-ok">digest {result.digest_hex}</span>
+            <span className="tag tag-stub">padding {result.padding_hex}</span>
+          </div>
+          <div className="chain-list">
+            {result.trace.map((item) => (
+              <div key={item.block} className="chain-row">
+                <span className="path-pill">H{item.block}</span>
+                <code>{item.prev_state_hex}</code>
+                <span className="path-arrow">+</span>
+                <code>{item.block_hex}</code>
+                <span className="path-arrow">→</span>
+                <code>{item.next_state_hex}</code>
+              </div>
+            ))}
+          </div>
+          <div className={`result-banner ${result.collision_demo.hash_collision_propagates ? "pass" : "fail"}`}>
+            Collision propagation demo: {String(result.collision_demo.hash_collision_propagates)}
+          </div>
+        </>
+      )}
+      {loading && !result && <span className="spinner" />}
+    </section>
+  );
+}
+
 function ReducePanel({ srcHandle, srcPrimitive, onTargetChange }) {
   const [tgtPrimitive, setTgtPrimitive] = useState("MAC");
   const [queryHex, setQueryHex] = useState("0102030405060708090a0b0c0d0e0f10");
@@ -860,6 +983,8 @@ export default function App() {
       <CpaGamePanel />
       <ModeAnimatorPanel />
       <MacGamePanel />
+      <CcaMalleabilityPanel />
+      <MerkleDamgardPanel />
 
       <ProofSummaryPanel
         srcPrimitive={srcPrimitive}
