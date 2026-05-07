@@ -29,6 +29,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 CPA_CHALLENGES: dict[str, dict] = {}
 MAC_GAMES: dict[str, dict] = {}
+CCA_GAMES: dict[str, dict] = {}
 
 # ─── Primitive registry ───────────────────────────────────────
 PRIMITIVES = {
@@ -122,6 +123,21 @@ class CPAGuessRequest(BaseModel):
     challenge_id: str
     guess: int
 
+class CPAOracleRequest(BaseModel):
+    challenge_id: str
+    message: str
+
+class CCAGameStartRequest(BaseModel):
+    message: str = "secret data"
+
+class CCAOracleEncRequest(BaseModel):
+    game_id: str
+    message: str
+
+class CCAOracleDecRequest(BaseModel):
+    game_id: str
+    ciphertext_hex: str
+
 class ModeAnimatorRequest(BaseModel):
     mode: str = "CBC"
     message: str = "Block one demo!!Block two demo!!Block three demo"
@@ -137,6 +153,10 @@ class MACForgeryRequest(BaseModel):
     game_id: str
     message: str
     tag_hex: str
+
+class MACOracleQueryRequest(BaseModel):
+    game_id: str
+    message: str
 
 class LengthExtensionRequest(BaseModel):
     message: str = "amount=100&to=bob"
@@ -514,6 +534,7 @@ def pa03_cpa_challenge(req: CPAChallengeRequest) -> dict:
     challenge_id = secrets.token_hex(12)
     CPA_CHALLENGES[challenge_id] = {
         "b": b,
+        "key": key,
         "reuse_nonce": req.reuse_nonce,
         "m0": m0.decode(errors="replace"),
         "m1": m1.decode(errors="replace"),
@@ -552,6 +573,25 @@ def pa03_cpa_guess(req: CPAGuessRequest) -> dict:
         "correct": correct,
         "reuse_nonce": challenge["reuse_nonce"],
         "chosen_message": challenge["m0"] if challenge["b"] == 0 else challenge["m1"],
+    }
+
+
+@app.post("/pa03/cpa_encrypt")
+def pa03_cpa_encrypt(req: CPAOracleRequest) -> dict:
+    """CPA encryption oracle: encrypt an arbitrary message under the challenge key."""
+    from src.pa03_cpa_enc.cpa_enc import Enc
+
+    challenge = CPA_CHALLENGES.get(req.challenge_id)
+    if challenge is None:
+        return {"status": "error", "message": "Unknown challenge_id. Start a new CPA game."}
+    key = challenge["key"]
+    msg = (req.message or "").encode()
+    nonce, ciphertext = Enc(key, msg)
+    return {
+        "status": "ok",
+        "message": req.message,
+        "nonce_hex": nonce.hex(),
+        "ciphertext_hex": ciphertext.hex(),
     }
 
 
@@ -732,6 +772,38 @@ def pa05_mac_forgery(req: MACForgeryRequest) -> dict:
     }
 
 
+@app.post("/pa05/mac_oracle_query")
+def pa05_mac_oracle_query(req: MACOracleQueryRequest) -> dict:
+    """PA#5 MAC oracle: sign a user-chosen message under the hidden key.
+
+    The message is added to the signed set so it cannot be used as a forgery.
+    This models the EUF-CMA oracle access.
+    """
+    from src.pa05_mac.mac import MacCBC
+
+    game = MAC_GAMES.get(req.game_id)
+    if game is None:
+        return {"status": "error", "message": "Unknown game_id. Start a new MAC game."}
+    msg_str = req.message or ""
+    if msg_str in game["signed_messages"]:
+        return {
+            "status": "ok",
+            "already_signed": True,
+            "message": msg_str,
+            "tag_hex": MacCBC().Mac(game["key"], msg_str.encode()).hex(),
+            "note": "This message was already signed. Query a different message.",
+        }
+    tag = MacCBC().Mac(game["key"], msg_str.encode())
+    game["signed_messages"].add(msg_str)
+    return {
+        "status": "ok",
+        "already_signed": False,
+        "message": msg_str,
+        "tag_hex": tag.hex(),
+        "signed_count": len(game["signed_messages"]),
+    }
+
+
 @app.post("/pa05/length_extension")
 def pa05_length_extension(req: LengthExtensionRequest) -> dict:
     from src.pa05_mac.mac import naive_mac
@@ -818,6 +890,91 @@ def pa06_cca_malleability(req: CCAMalleabilityRequest) -> dict:
             {"step": "CCA Encrypt-then-MAC", "description": "Verify tag over ciphertext before decrypting.", "output_hex": tag.hex()},
             {"step": "Tamper check", "description": "The old tag no longer matches the tampered ciphertext, so decryption returns ⊥."},
         ],
+    }
+
+
+@app.post("/pa06/cca_game_start")
+def pa06_cca_game_start(req: CCAGameStartRequest) -> dict:
+    """Start a CCA game: encrypt a challenge message, give the user enc+dec oracle access."""
+    from src.pa03_cpa_enc.cpa_enc import Enc
+    from src.pa06_cca_enc.cca_enc import CCAEnc
+
+    key_enc = secrets.token_bytes(16)
+    key_mac = secrets.token_bytes(16)
+    message = (req.message or "secret data").encode()
+    cca = CCAEnc()
+    packed_c, tag = cca.CCA_Enc(key_enc, key_mac, message)
+    game_id = secrets.token_hex(12)
+    CCA_GAMES[game_id] = {
+        "key_enc": key_enc,
+        "key_mac": key_mac,
+        "challenge_ct_hex": packed_c.hex(),
+        "challenge_tag_hex": tag.hex(),
+        "enc_queries": 0,
+        "dec_queries": 0,
+    }
+    if len(CCA_GAMES) > 100:
+        for old_key in list(CCA_GAMES.keys())[:25]:
+            CCA_GAMES.pop(old_key, None)
+    return {
+        "status": "ok",
+        "game_id": game_id,
+        "challenge_ciphertext_hex": packed_c.hex(),
+        "challenge_tag_hex": tag.hex(),
+    }
+
+
+@app.post("/pa06/cca_encrypt")
+def pa06_cca_encrypt(req: CCAOracleEncRequest) -> dict:
+    """CCA encryption oracle: Enc(k, m) under the game key."""
+    from src.pa06_cca_enc.cca_enc import CCAEnc
+
+    game = CCA_GAMES.get(req.game_id)
+    if game is None:
+        return {"status": "error", "message": "Unknown game_id. Start a new CCA game."}
+    msg = (req.message or "").encode()
+    cca = CCAEnc()
+    packed_c, tag = cca.CCA_Enc(game["key_enc"], game["key_mac"], msg)
+    game["enc_queries"] += 1
+    return {
+        "status": "ok",
+        "message": req.message,
+        "ciphertext_hex": packed_c.hex(),
+        "tag_hex": tag.hex(),
+    }
+
+
+@app.post("/pa06/cca_decrypt")
+def pa06_cca_decrypt(req: CCAOracleDecRequest) -> dict:
+    """CCA decryption oracle: Dec(k, c) — rejects if c is the challenge ciphertext."""
+    from src.pa06_cca_enc.cca_enc import CCAEnc
+
+    game = CCA_GAMES.get(req.game_id)
+    if game is None:
+        return {"status": "error", "message": "Unknown game_id. Start a new CCA game."}
+    ct_hex = _normalise_hex(req.ciphertext_hex, "")
+    if ct_hex == game["challenge_ct_hex"]:
+        return {
+            "status": "ok",
+            "rejected": True,
+            "reason": "Cannot decrypt the challenge ciphertext (IND-CCA2 restriction).",
+        }
+    try:
+        ct_bytes = bytes.fromhex(ct_hex)
+    except ValueError:
+        return {"status": "error", "message": "Invalid hex ciphertext."}
+    cca = CCAEnc()
+    tag = bytes.fromhex(game["challenge_tag_hex"])
+    plaintext = cca.CCA_Dec(game["key_enc"], game["key_mac"], ct_bytes, tag)
+    game["dec_queries"] += 1
+    if plaintext is None:
+        return {"status": "ok", "rejected": False, "decrypted": False, "result": "⊥ (MAC verification failed)"}
+    return {
+        "status": "ok",
+        "rejected": False,
+        "decrypted": True,
+        "plaintext_text": _safe_text(plaintext),
+        "plaintext_hex": plaintext.hex(),
     }
 
 
@@ -1097,11 +1254,14 @@ def pa13_miller_rabin(req: MillerRabinDemoRequest) -> dict:
     trace = []
     if n > 3 and n % 2 == 1:
         s, d = _decompose(n - 1)
-        witnesses = []
-        candidate = 2
-        while len(witnesses) < rounds and candidate <= n - 2:
-            witnesses.append(candidate)
-            candidate += 1
+        import random
+        rng = random.Random(n)  # deterministic per n for reproducibility
+        witness_set = set()
+        # Always include 2 as first witness, then random samples
+        witness_set.add(2)
+        while len(witness_set) < min(rounds, n - 3):
+            witness_set.add(rng.randint(2, n - 2))
+        witnesses = sorted(witness_set)[:rounds]
         composite = False
         for a in witnesses:
             x = modexp(a, d, n)

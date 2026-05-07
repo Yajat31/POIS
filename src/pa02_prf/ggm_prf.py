@@ -61,22 +61,17 @@ class GGMPRF:
         self._prg = PRG(self.owf)
 
     def _G(self, s: int) -> tuple[int, int]:
-        """Apply the PRG to state s, return (G_0(s), G_1(s)) as integers."""
-        self._prg.seed(s)
-        bits = self._prg.next_bits(self.output_bits)
-        half = self.output_bits // 2
-        left_bits = bits[:half]
-        right_bits = bits[half:]
-        # Convert to integers for use as next states
-        left = 0
-        for b in left_bits:
-            left = (left << 1) | b
-        right = 0
-        for b in right_bits:
-            right = (right << 1) | b
-        # Map back into Z_q
-        left = left % self.owf.q or 1
-        right = right % self.owf.q or 1
+        """Apply the length-doubling PRG to state s, return (G_0(s), G_1(s)).
+
+        Uses domain-separated OWF evaluations:
+            G_0(s) = f(2s + 1) mod q
+            G_1(s) = f(2s + 2) mod q
+        This guarantees distinct left/right children for any parent state,
+        since f(x) = g^x mod p maps different exponents to different group
+        elements (g is a generator of a prime-order subgroup).
+        """
+        left = self.owf.evaluate((2 * s + 1) % self.owf.q) % self.owf.q or 1
+        right = self.owf.evaluate((2 * s + 2) % self.owf.q) % self.owf.q or 1
         return left, right
 
     def F(self, k: int | bytes, x_bits: list[int]) -> int:

@@ -8,11 +8,16 @@ import {
   runGgmTree,
   startCpaChallenge,
   submitCpaGuess,
+  cpaEncryptOracle,
   runModeAnimator,
   startMacGame,
   submitMacForgery,
+  queryMacOracle,
   runLengthExtension,
   runCcaMalleability,
+  startCcaGame,
+  ccaEncrypt,
+  ccaDecrypt,
   runMdChain,
   runDlpHash,
   runBirthdayAttack,
@@ -326,10 +331,13 @@ function CpaGamePanel() {
   const [lastGuess, setLastGuess] = useState(null);
   const [stats, setStats] = useState({ rounds: 0, wins: 0 });
   const [loading, setLoading] = useState(false);
+  const [oracleMsg, setOracleMsg] = useState("");
+  const [oracleResults, setOracleResults] = useState([]);
 
   const startRound = useCallback(async () => {
     setLoading(true);
     setLastGuess(null);
+    setOracleResults([]);
     try {
       setChallenge(await startCpaChallenge({ m0, m1, reuse_nonce: reuseNonce }));
     } catch (e) {
@@ -338,6 +346,20 @@ function CpaGamePanel() {
       setLoading(false);
     }
   }, [m0, m1, reuseNonce]);
+
+  const queryEncOracle = useCallback(async () => {
+    if (!challenge?.challenge_id || !oracleMsg.trim()) return;
+    setLoading(true);
+    try {
+      const r = await cpaEncryptOracle({ challenge_id: challenge.challenge_id, message: oracleMsg.trim() });
+      if (r?.status === "ok") {
+        setOracleResults((prev) => [...prev, r]);
+      }
+      setOracleMsg("");
+    } finally {
+      setLoading(false);
+    }
+  }, [challenge, oracleMsg]);
 
   const guess = useCallback(async (value) => {
     if (!challenge?.challenge_id) return;
@@ -397,6 +419,30 @@ function CpaGamePanel() {
               <div className="step-value">{challenge.reference_ciphertext_hex}</div>
             </div>
           )}
+
+          {/* Encryption Oracle */}
+          <div className="panel-title subtle">Encryption Oracle — Enc<sub>k</sub>(m)</div>
+          <div className="demo-grid">
+            <div className="input-wrapper">
+              <label className="select-label">Message to encrypt</label>
+              <input className="styled-input text-input" value={oracleMsg} onChange={(e) => setOracleMsg(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && queryEncOracle()}
+                placeholder="Query the encryption oracle…" />
+            </div>
+          </div>
+          <button className="action-btn" onClick={queryEncOracle} disabled={loading || !oracleMsg.trim()}>🔒 Encrypt</button>
+          {oracleResults.length > 0 && (
+            <div className="oracle-list">
+              {oracleResults.map((r, i) => (
+                <div key={i} className="oracle-row">
+                  <span>🔎 {r.message}</span>
+                  <code>{r.ciphertext_hex}</code>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Guess */}
           {!lastGuess && (
             <div className="button-row">
               <button className="action-btn" onClick={() => guess(0)} disabled={loading}>Guess m0</button>
@@ -488,40 +534,118 @@ function ModeAnimatorPanel() {
       )}
 
       {result?.status === "error" && <StubCard message={result.message} />}
-      {result?.status === "ok" && (
+      {result?.status === "ok" && (() => {
+        const steps = result.steps.slice(0, 4);
+        const N = steps.length;
+        const BW = 240; // block width unit
+        const W = N * BW + 100;
+        const H = 280;
+        const isCbc = result.mode === "CBC";
+        const isOfb = result.mode === "OFB";
+        const isCtr = result.mode === "CTR";
+        return (
         <>
           <div className="metric-row">
             <span className="tag tag-ok">{result.mode}</span>
             <span className="tag tag-stub">IV/nonce {result.iv_or_nonce_hex}</span>
           </div>
-          <div className="block-grid">
-            {result.steps.slice(0, 3).map((step) => (
-              <div key={step.block} className="block-card">
-                <div className="step-title">Block {step.block}</div>
-                <div className="step-desc">M: {step.plain_hex}</div>
-                {step.xor_with_hex && <div className="step-desc">xor: {step.xor_with_hex}</div>}
-                {step.counter_hex && <div className="step-desc">ctr: {step.counter_hex}</div>}
-                {step.feedback_hex && <div className="step-desc">ofb: {step.feedback_hex}</div>}
-                {step.keystream_hex && <div className="step-desc">ks: {step.keystream_hex}</div>}
-                {step.aes_input_hex && <div className="step-desc">AES in: {step.aes_input_hex}</div>}
-                <div className="step-value">C: {step.cipher_hex}</div>
-              </div>
-            ))}
-          </div>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", background: "#07111f", borderRadius: 8, border: "1px solid var(--border)" }}>
+            <defs>
+              <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#475569" />
+              </marker>
+              <marker id="arr-cyan" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#22d3ee" />
+              </marker>
+            </defs>
+            {/* IV box */}
+            <rect x="15" y="80" width="55" height="30" rx="5" fill="#312e81" stroke="#6366f1" strokeWidth="1.5" />
+            <text x="42" y="100" fill="#a5b4fc" fontSize="11" textAnchor="middle" fontFamily="monospace">IV</text>
+            {steps.map((step, i) => {
+              const bx = 90 + i * BW;
+              const diffBlock = result.diff_blocks?.[i];
+              const isChanged = diffBlock && diffBlock.diff_bytes > 0;
+              // Centers
+              const xorCx = bx + 60, xorCy = 95;
+              const aesCx = bx + 60, aesCy = 155;
+              const mCx = bx + 15, mCy = 95;
+              return (
+                <g key={step.block}>
+                  {/* ── Plaintext block ── */}
+                  <rect x={bx} y="20" width="50" height="26" rx="4" fill="#1e293b" stroke="#475569" strokeWidth="1" />
+                  <text x={bx + 25} y="38" fill="#94a3b8" fontSize="10" textAnchor="middle" fontFamily="monospace">M{i}</text>
+
+                  {isCbc && (
+                    <>
+                      {/* M feeds down into XOR */}
+                      <line x1={bx + 25} y1="46" x2={xorCx} y2={xorCy - 14} stroke="#475569" strokeWidth="1.5" markerEnd="url(#arr)" />
+                      {/* XOR circle */}
+                      <circle cx={xorCx} cy={xorCy} r="14" fill="none" stroke="#22d3ee" strokeWidth="2" />
+                      <text x={xorCx} y={xorCy + 5} fill="#22d3ee" fontSize="16" textAnchor="middle">⊕</text>
+                      {/* IV/prev → XOR */}
+                      <line x1={i === 0 ? 70 : bx - BW + 60} y1={i === 0 ? 95 : 215} x2={xorCx - 14} y2={xorCy} stroke={i === 0 ? "#6366f1" : "#f59e0b"} strokeWidth="1.5" markerEnd="url(#arr)" />
+                      {/* XOR → AES */}
+                      <line x1={xorCx} y1={xorCy + 14} x2={aesCx} y2={aesCy - 18} stroke="#22d3ee" strokeWidth="1.5" markerEnd="url(#arr-cyan)" />
+                    </>
+                  )}
+                  {isOfb && (
+                    <>
+                      {/* IV/prev AES output → AES input */}
+                      <line x1={i === 0 ? 70 : bx - BW + 100} y1={i === 0 ? 95 : 155} x2={aesCx - 22} y2={aesCy} stroke={i === 0 ? "#6366f1" : "#f59e0b"} strokeWidth="1.5" markerEnd="url(#arr)" strokeDasharray={i === 0 ? "none" : "5,3"} />
+                      {/* AES output → XOR */}
+                      <line x1={aesCx + 22} y1={aesCy} x2={bx + 115} y2={aesCy} stroke="#22d3ee" strokeWidth="1.5" markerEnd="url(#arr-cyan)" />
+                      {/* XOR circle at right */}
+                      <circle cx={bx + 130} cy={aesCy} r="14" fill="none" stroke="#22d3ee" strokeWidth="2" />
+                      <text x={bx + 130} y={aesCy + 5} fill="#22d3ee" fontSize="16" textAnchor="middle">⊕</text>
+                      {/* M → XOR from top */}
+                      <line x1={bx + 25} y1="46" x2={bx + 130} y2={aesCy - 14} stroke="#475569" strokeWidth="1.5" markerEnd="url(#arr)" />
+                      {/* XOR → C */}
+                      <line x1={bx + 130} y1={aesCy + 14} x2={bx + 60} y2="210" stroke="#475569" strokeWidth="1.5" markerEnd="url(#arr)" />
+                    </>
+                  )}
+                  {isCtr && (
+                    <>
+                      {/* Counter box */}
+                      <rect x={bx + 35} y="70" width="50" height="22" rx="4" fill="#312e81" stroke="#6366f1" strokeWidth="1" />
+                      <text x={bx + 60} y="85" fill="#a5b4fc" fontSize="9" textAnchor="middle" fontFamily="monospace">ctr:{i}</text>
+                      {/* Counter → AES */}
+                      <line x1={aesCx} y1="92" x2={aesCx} y2={aesCy - 18} stroke="#6366f1" strokeWidth="1.5" markerEnd="url(#arr)" />
+                      {/* AES output → XOR */}
+                      <line x1={aesCx + 22} y1={aesCy} x2={bx + 115} y2={aesCy} stroke="#22d3ee" strokeWidth="1.5" markerEnd="url(#arr-cyan)" />
+                      {/* XOR circle */}
+                      <circle cx={bx + 130} cy={aesCy} r="14" fill="none" stroke="#22d3ee" strokeWidth="2" />
+                      <text x={bx + 130} y={aesCy + 5} fill="#22d3ee" fontSize="16" textAnchor="middle">⊕</text>
+                      {/* M → XOR from top */}
+                      <line x1={bx + 25} y1="46" x2={bx + 130} y2={aesCy - 14} stroke="#475569" strokeWidth="1.5" markerEnd="url(#arr)" />
+                      {/* XOR → C */}
+                      <line x1={bx + 130} y1={aesCy + 14} x2={bx + 60} y2="210" stroke="#475569" strokeWidth="1.5" markerEnd="url(#arr)" />
+                    </>
+                  )}
+
+                  {/* ── AES box ── */}
+                  <rect x={aesCx - 22} y={aesCy - 17} width="44" height="34" rx="5" fill="#1e3a5f" stroke="#22d3ee" strokeWidth="2" />
+                  <text x={aesCx} y={aesCy + 5} fill="#22d3ee" fontSize="11" textAnchor="middle" fontFamily="monospace">AES</text>
+
+                  {/* ── Ciphertext box ── */}
+                  {isCbc && <line x1={aesCx} y1={aesCy + 17} x2={aesCx} y2="210" stroke="#475569" strokeWidth="1.5" markerEnd="url(#arr)" />}
+                  <rect x={bx + 38} y="212" width="44" height="26" rx="4" fill={isChanged ? "#7f1d1d" : "#1e293b"} stroke={isChanged ? "#ef4444" : "#475569"} strokeWidth="1.2" />
+                  <text x={bx + 60} y="230" fill={isChanged ? "#fca5a5" : "#94a3b8"} fontSize="10" textAnchor="middle" fontFamily="monospace">C{i}</text>
+                  {/* Decrypted text below */}
+                  <text x={bx + 60} y="255" fill={isChanged ? "#fca5a5" : "#6ee7b7"} fontSize="8" textAnchor="middle" fontFamily="monospace">
+                    {diffBlock ? diffBlock.decrypted_text?.slice(0, 10) : ""}
+                  </text>
+                  {isChanged && (
+                    <text x={bx + 60} y="270" fill="#ef4444" fontSize="8" textAnchor="middle" fontFamily="monospace">Δ{diffBlock.diff_bytes}B</text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
           <div className="step-item">
             <div className="step-title">{result.flip.enabled ? "Bit Flip Propagation" : "Clean Decryption"}</div>
             <div className="step-desc">
               {result.flip.enabled ? result.analysis : "No ciphertext bit is flipped, so decryption should recover the original plaintext blocks."}
             </div>
-          </div>
-          <div className="block-grid">
-            {result.diff_blocks.slice(0, 3).map((block) => (
-              <div key={block.block} className={`block-card ${block.diff_bytes ? "changed" : ""}`}>
-                <div className="step-title">Plaintext block {block.block}</div>
-                <div className="step-desc">changed bytes: {block.diff_bytes}</div>
-                <div className="step-value">{block.decrypted_text}</div>
-              </div>
-            ))}
           </div>
           {result.reuse_demo && (
             <div className={`result-banner ${result.reuse_demo.match ? "fail" : "pass"}`}>
@@ -529,7 +653,8 @@ function ModeAnimatorPanel() {
             </div>
           )}
         </>
-      )}
+        );
+      })()}
       {loading && !result && <span className="spinner" />}
     </section>
   );
@@ -537,6 +662,8 @@ function ModeAnimatorPanel() {
 
 function MacGamePanel() {
   const [game, setGame] = useState(null);
+  const [oracleTags, setOracleTags] = useState([]);
+  const [queryMsg, setQueryMsg] = useState("");
   const [message, setMessage] = useState("new-message");
   const [tagHex, setTagHex] = useState("00");
   const [forgery, setForgery] = useState(null);
@@ -548,8 +675,11 @@ function MacGamePanel() {
   const startGame = useCallback(async () => {
     setLoading(true);
     setForgery(null);
+    setOracleTags([]);
     try {
-      setGame(await startMacGame({ num_messages: 8 }));
+      const g = await startMacGame({ num_messages: 3 });
+      setGame(g);
+      if (g?.signed) setOracleTags(g.signed);
     } finally {
       setLoading(false);
     }
@@ -558,6 +688,23 @@ function MacGamePanel() {
   useEffect(() => {
     startGame();
   }, [startGame]);
+
+  const queryOracle = useCallback(async () => {
+    if (!game?.game_id || !queryMsg.trim()) return;
+    setLoading(true);
+    try {
+      const r = await queryMacOracle({ game_id: game.game_id, message: queryMsg.trim() });
+      if (r?.status === "ok" && !r.already_signed) {
+        setOracleTags((prev) => [...prev, { message: r.message, tag_hex: r.tag_hex, queried: true }]);
+      }
+      if (r?.already_signed) {
+        setForgery({ status: "ok", accepted: false, fresh_message: false, note: "Already signed" });
+      }
+      setQueryMsg("");
+    } finally {
+      setLoading(false);
+    }
+  }, [game, queryMsg]);
 
   const submitForgery = useCallback(async () => {
     if (!game?.game_id) return;
@@ -580,27 +727,42 @@ function MacGamePanel() {
 
   return (
     <section className="demo-panel">
-      <div className="panel-title">PA#5 — MAC Forgery Game</div>
+      <div className="panel-title">PA#5 — MAC Forgery Game (EUF-CMA)</div>
       <div className="info-card">
-        <strong>CBC-MAC forgery game:</strong> the signed messages below are oracle queries under a hidden key.
-        The textbox lets you play the attacker: submit a new message and a guessed tag.
-        Success means producing a valid tag for a message that was not already signed.
+        <strong>EUF-CMA game:</strong> You have oracle access to MAC<sub>k</sub>(·) under a hidden key k.
+        Query the oracle on messages of your choice. Then forge a valid tag for a <em>new</em> message
+        that you did NOT query. If you succeed, you've broken EUF-CMA.
       </div>
       <div className="metric-row">
-        <button className="action-btn" onClick={startGame} disabled={loading}>New MAC Game</button>
-        {game?.status === "ok" && <span className="tag tag-stub">{game.signed.length} oracle tags</span>}
+        <button className="action-btn" onClick={startGame} disabled={loading}>New Game</button>
+        <span className="tag tag-stub">{oracleTags.length} oracle queries</span>
         {forgery?.status === "ok" && <span className="tag tag-stub">attempts {forgery.attempts}, successes {forgery.successes}</span>}
       </div>
-      {game?.status === "ok" && (
+
+      <div className="panel-title subtle">① Oracle Access — query MAC<sub>k</sub>(m)</div>
+      <div className="demo-grid">
+        <div className="input-wrapper">
+          <label className="select-label">Message to sign</label>
+          <input className="styled-input text-input" value={queryMsg} onChange={(e) => setQueryMsg(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && queryOracle()}
+            placeholder="Type a message and click Query Oracle…" />
+        </div>
+      </div>
+      <button className="action-btn" onClick={queryOracle} disabled={loading || !game?.game_id || !queryMsg.trim()}>
+        📝 Query Oracle
+      </button>
+      {oracleTags.length > 0 && (
         <div className="oracle-list">
-          {game.signed.map((item) => (
-            <div key={item.message} className="oracle-row">
-              <span>{item.message}</span>
+          {oracleTags.map((item, i) => (
+            <div key={`${item.message}-${i}`} className="oracle-row">
+              <span>{item.queried ? "🔎 " : "📋 "}{item.message}</span>
               <code>{item.tag_hex}</code>
             </div>
           ))}
         </div>
       )}
+
+      <div className="panel-title subtle">② Forgery Attempt — forge MAC<sub>k</sub>(m*) for new m*</div>
       <div className="demo-grid">
         <div className="input-wrapper">
           <label className="select-label">Fresh message m*</label>
@@ -614,8 +776,8 @@ function MacGamePanel() {
       <button className="action-btn" onClick={submitForgery} disabled={loading || !game?.game_id}>Submit Forgery</button>
       {forgery?.status === "ok" && (
         <div className={`result-banner ${forgery.accepted ? "pass" : "fail"}`}>
-          {forgery.accepted ? "Forgery accepted" : "Forgery rejected"}.
-          {!forgery.fresh_message ? " The message was already signed." : ""}
+          {forgery.accepted ? "🏆 Forgery accepted — EUF-CMA broken!" : "Forgery rejected"}.
+          {!forgery.fresh_message ? " That message was already signed by the oracle." : ""}
         </div>
       )}
 
@@ -677,6 +839,11 @@ function CcaMalleabilityPanel() {
   const [flipByte, setFlipByte] = useState(0);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  // CCA oracle state
+  const [ccaGame, setCcaGame] = useState(null);
+  const [encMsg, setEncMsg] = useState("");
+  const [decHex, setDecHex] = useState("");
+  const [oracleLog, setOracleLog] = useState([]);
 
   const runDemo = useCallback(async () => {
     setLoading(true);
@@ -691,6 +858,45 @@ function CcaMalleabilityPanel() {
     const id = setTimeout(runDemo, 180);
     return () => clearTimeout(id);
   }, [runDemo]);
+
+  const startGame = useCallback(async () => {
+    setLoading(true);
+    setOracleLog([]);
+    try {
+      setCcaGame(await startCcaGame({ message: "secret challenge" }));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const queryEnc = useCallback(async () => {
+    if (!ccaGame?.game_id || !encMsg.trim()) return;
+    setLoading(true);
+    try {
+      const r = await ccaEncrypt({ game_id: ccaGame.game_id, message: encMsg.trim() });
+      if (r?.status === "ok") {
+        setOracleLog((prev) => [...prev, { type: "enc", message: encMsg.trim(), ct: r.ciphertext_hex, tag: r.tag_hex }]);
+      }
+      setEncMsg("");
+    } finally {
+      setLoading(false);
+    }
+  }, [ccaGame, encMsg]);
+
+  const queryDec = useCallback(async () => {
+    if (!ccaGame?.game_id || !decHex.trim()) return;
+    setLoading(true);
+    try {
+      const r = await ccaDecrypt({ game_id: ccaGame.game_id, ciphertext_hex: decHex.trim() });
+      if (r?.status === "ok") {
+        const info = r.rejected ? "🚫 REJECTED (challenge CT)" : r.decrypted ? `✅ ${r.plaintext_text}` : `❌ ${r.result}`;
+        setOracleLog((prev) => [...prev, { type: "dec", ct: decHex.trim().slice(0, 20) + "…", result: info }]);
+      }
+      setDecHex("");
+    } finally {
+      setLoading(false);
+    }
+  }, [ccaGame, decHex]);
 
   return (
     <section className="demo-panel">
@@ -726,6 +932,50 @@ function CcaMalleabilityPanel() {
             <div className="result-banner fail">Decryption output: {result.cca.result}</div>
           </div>
         </div>
+      )}
+
+      {/* CCA Oracle Access */}
+      <div className="panel-title subtle">IND-CCA2 Oracle Access</div>
+      <div className="info-card">
+        Start a CCA game to get Enc<sub>k</sub>(·) and Dec<sub>k</sub>(·) oracle access. The decryption oracle rejects the challenge ciphertext.
+      </div>
+      <button className="action-btn" onClick={startGame} disabled={loading}>Start CCA Game</button>
+      {ccaGame?.status === "ok" && (
+        <>
+          <div className="step-item">
+            <div className="step-title">Challenge C*</div>
+            <div className="step-value">{ccaGame.challenge_ciphertext_hex}</div>
+          </div>
+          <div className="demo-grid">
+            <div className="input-wrapper">
+              <label className="select-label">Enc oracle — message</label>
+              <input className="styled-input text-input" value={encMsg} onChange={(e) => setEncMsg(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && queryEnc()} placeholder="Encrypt a message…" />
+            </div>
+            <div className="input-wrapper">
+              <label className="select-label">Dec oracle — ciphertext (hex)</label>
+              <input className="styled-input" value={decHex} onChange={(e) => setDecHex(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && queryDec()} placeholder="Decrypt a ciphertext…" />
+            </div>
+          </div>
+          <div className="button-row">
+            <button className="action-btn" onClick={queryEnc} disabled={loading || !encMsg.trim()}>🔒 Encrypt</button>
+            <button className="action-btn" onClick={queryDec} disabled={loading || !decHex.trim()}>🔓 Decrypt</button>
+          </div>
+          {oracleLog.length > 0 && (
+            <div className="oracle-list">
+              {oracleLog.map((entry, i) => (
+                <div key={i} className="oracle-row">
+                  {entry.type === "enc" ? (
+                    <><span>🔒 Enc({entry.message})</span><code>{entry.ct}</code></>
+                  ) : (
+                    <><span>🔓 Dec({entry.ct})</span><code>{entry.result}</code></>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
       {loading && !result && <span className="spinner" />}
     </section>
@@ -770,19 +1020,55 @@ function MerkleDamgardPanel() {
           <div className="metric-row">
             <span className="tag tag-ok">digest {result.digest_hex}</span>
             <span className="tag tag-stub">padding {result.padding_hex}</span>
+            <span className="tag tag-stub">{result.trace.length} blocks</span>
           </div>
-          <div className="chain-list">
-            {result.trace.map((item) => (
-              <div key={item.block} className="chain-row">
-                <span className="path-pill">H{item.block}</span>
-                <code>{item.prev_state_hex}</code>
-                <span className="path-arrow">+</span>
-                <code>{item.block_hex}</code>
-                <span className="path-arrow">→</span>
-                <code>{item.next_state_hex}</code>
-              </div>
-            ))}
-          </div>
+          {/* SVG Merkle-Damgård pipeline */}
+          <svg viewBox={`0 0 ${(result.trace.length + 1) * 200 + 60} 200`}
+            style={{ width: "100%", background: "#07111f", borderRadius: 8, border: "1px solid var(--border)" }}>
+            <defs>
+              <marker id="md-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#475569" />
+              </marker>
+            </defs>
+            {/* IV box */}
+            <rect x="12" y="70" width="60" height="32" rx="5" fill="#312e81" stroke="#6366f1" strokeWidth="1.5" />
+            <text x="42" y="91" fill="#a5b4fc" fontSize="11" textAnchor="middle" fontFamily="monospace">IV</text>
+            {/* Arrow from IV */}
+            <line x1="72" y1="86" x2="95" y2="86" stroke="#475569" strokeWidth="1.5" markerEnd="url(#md-arrow)" />
+            {result.trace.map((item, i) => {
+              const x = 95 + i * 190;
+              return (
+                <g key={item.block}>
+                  {/* Message block input (from top) */}
+                  <rect x={x + 5} y="10" width="60" height="26" rx="4" fill="#1e293b" stroke="#475569" strokeWidth="1" />
+                  <text x={x + 35} y="28" fill="#94a3b8" fontSize="10" textAnchor="middle" fontFamily="monospace">B{item.block}</text>
+                  <line x1={x + 35} y1="36" x2={x + 35} y2="62" stroke="#22d3ee" strokeWidth="1.5" markerEnd="url(#md-arrow)" />
+                  {/* Compression function box */}
+                  <rect x={x} y="64" width="70" height="44" rx="5" fill="#1e3a5f" stroke="#22d3ee" strokeWidth="2" />
+                  <text x={x + 35} y="91" fill="#22d3ee" fontSize="11" textAnchor="middle" fontFamily="monospace">f(H,B)</text>
+                  {/* State output label */}
+                  <text x={x + 35} y="125" fill="#6ee7b7" fontSize="8" textAnchor="middle" fontFamily="monospace">
+                    {item.next_state_hex?.slice(0, 12)}
+                  </text>
+                  {/* Arrow to next compression */}
+                  {i < result.trace.length - 1 && (
+                    <line x1={x + 70} y1="86" x2={x + 190} y2="86" stroke="#475569" strokeWidth="1.5" markerEnd="url(#md-arrow)" />
+                  )}
+                  {/* Arrow to digest on last */}
+                  {i === result.trace.length - 1 && (
+                    <>
+                      <line x1={x + 70} y1="86" x2={x + 100} y2="86" stroke="#475569" strokeWidth="1.5" markerEnd="url(#md-arrow)" />
+                      <rect x={x + 100} y="70" width="70" height="32" rx="5" fill="#064e3b" stroke="#10b981" strokeWidth="1.5" />
+                      <text x={x + 135} y="91" fill="#6ee7b7" fontSize="10" textAnchor="middle" fontFamily="monospace">digest</text>
+                      <text x={x + 135} y="120" fill="#6ee7b7" fontSize="8" textAnchor="middle" fontFamily="monospace">
+                        {result.digest_hex?.slice(0, 12)}
+                      </text>
+                    </>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
           <div className={`result-banner ${result.collision_demo.hash_collision_propagates ? "pass" : "fail"}`}>
             Collision propagation demo: {String(result.collision_demo.hash_collision_propagates)}
           </div>
@@ -800,6 +1086,7 @@ function DlpHashPanel() {
   const [loading, setLoading] = useState(false);
   const [huntResult, setHuntResult] = useState(null);
   const [huntLoading, setHuntLoading] = useState(false);
+  const [huntBits, setHuntBits] = useState(16);
 
   const runDemo = useCallback(async () => {
     setLoading(true);
@@ -818,14 +1105,14 @@ function DlpHashPanel() {
   const runCollisionHunt = useCallback(async () => {
     setHuntLoading(true);
     try {
-      setHuntResult(await runBirthdayAttack({ n_bits: 16, max_evaluations: 100000 }));
+      setHuntResult(await runBirthdayAttack({ n_bits: huntBits, max_evaluations: 100000 }));
     } finally {
       setHuntLoading(false);
     }
-  }, []);
+  }, [huntBits]);
 
   const huntAttack = huntResult?.attack;
-  const huntBound = 256; // 2^(16/2)
+  const huntBound = Math.ceil(Math.sqrt(2 ** huntBits));
   const huntProgress = huntAttack ? Math.min(1, huntAttack.evaluations / huntBound) : 0;
 
   return (
@@ -863,7 +1150,11 @@ function DlpHashPanel() {
           </div>
         </>
       )}
-      <div className="panel-title subtle">Collision Hunt (16-bit truncated output)</div>
+      <div className="panel-title subtle">Collision Hunt ({huntBits}-bit truncated output)</div>
+      <div className="input-wrapper">
+        <label className="select-label">Truncated bits: {huntBits} — birthday bound 2^({huntBits}/2) = {huntBound}</label>
+        <input className="styled-range" type="range" min="8" max="20" value={huntBits} onChange={(e) => setHuntBits(Number(e.target.value))} />
+      </div>
       <button className="action-btn" onClick={runCollisionHunt} disabled={huntLoading}>
         {huntLoading ? <span className="spinner" /> : "🔍 Collision Hunt"}
       </button>
@@ -1882,17 +2173,28 @@ function ProofSummaryPanel({ srcPrimitive, tgtPrimitive, foundation, isOpen, onT
   );
 }
 
+const DEMO_TABS = [
+  { key: "foundations", label: "🔑 Foundations", desc: "OWF, PRG & GGM-PRF — the building blocks" },
+  { key: "symmetric", label: "🔐 Symmetric", desc: "CPA, Block modes, MAC & CCA security" },
+  { key: "hashing", label: "#️⃣ Hashing", desc: "Merkle-Damgård, DLP hash, Birthday & HMAC" },
+  { key: "pubkey", label: "🗝️ Public Key", desc: "DH, RSA, Miller-Rabin, Håstad, Signatures, ElGamal & CCA-PKC" },
+  { key: "mpc", label: "🤝 MPC", desc: "Oblivious Transfer, Secure AND & Millionaire's Problem" },
+];
+
 export default function App() {
   const [foundation, setFoundation] = useState("DLP");
   const [srcHandle, setSrcHandle] = useState(null);
   const [srcPrimitive, setSrcPrimitive] = useState("PRG");
   const [proofOpen, setProofOpen] = useState(false);
   const [tgtPrimitive, setTgtPrimitive] = useState("MAC");
+  const [demoTab, setDemoTab] = useState("foundations");
 
   const handleHandle = useCallback((handle, prim) => {
     setSrcHandle(handle);
     setSrcPrimitive(prim);
   }, []);
+
+  const activeTabInfo = DEMO_TABS.find((t) => t.key === demoTab) || DEMO_TABS[0];
 
   return (
     <>
@@ -1910,27 +2212,7 @@ export default function App() {
         <ReducePanel srcHandle={srcHandle} srcPrimitive={srcPrimitive} onTargetChange={setTgtPrimitive} />
       </div>
 
-      <PrgViewerPanel />
-      <GgmTreePanel />
-      <CpaGamePanel />
-      <ModeAnimatorPanel />
-      <MacGamePanel />
-      <CcaMalleabilityPanel />
-      <MerkleDamgardPanel />
-      <DlpHashPanel />
-      <BirthdayAttackPanel />
-      <HmacComparePanel />
-      <DiffieHellmanPanel />
-      <RsaDemoPanel />
-      <MillerRabinPanel />
-      <HastadPanel />
-      <SignaturePanel />
-      <ElGamalPanel />
-      <CcaPkcPanel />
-      <OtPanel />
-      <SecureAndPanel />
-      <MillionairePanel />
-
+      {/* Proof Summary — directly below clique */}
       <ProofSummaryPanel
         srcPrimitive={srcPrimitive}
         tgtPrimitive={tgtPrimitive}
@@ -1938,6 +2220,70 @@ export default function App() {
         isOpen={proofOpen}
         onToggle={() => setProofOpen((o) => !o)}
       />
+
+      {/* Demo Tab Bar */}
+      <nav className="demo-tab-bar">
+        {DEMO_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            className={`demo-tab ${demoTab === tab.key ? "active" : ""}`}
+            onClick={() => setDemoTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+      <div className="demo-section-header">{activeTabInfo.desc}</div>
+
+      {/* Foundations: PA#1, PA#2 */}
+      {demoTab === "foundations" && (
+        <>
+          <PrgViewerPanel />
+          <GgmTreePanel />
+        </>
+      )}
+
+      {/* Symmetric: PA#3-6 */}
+      {demoTab === "symmetric" && (
+        <>
+          <CpaGamePanel />
+          <ModeAnimatorPanel />
+          <MacGamePanel />
+          <CcaMalleabilityPanel />
+        </>
+      )}
+
+      {/* Hashing: PA#7-10 */}
+      {demoTab === "hashing" && (
+        <>
+          <MerkleDamgardPanel />
+          <DlpHashPanel />
+          <BirthdayAttackPanel />
+          <HmacComparePanel />
+        </>
+      )}
+
+      {/* Public Key: PA#11-17 */}
+      {demoTab === "pubkey" && (
+        <>
+          <DiffieHellmanPanel />
+          <RsaDemoPanel />
+          <MillerRabinPanel />
+          <HastadPanel />
+          <SignaturePanel />
+          <ElGamalPanel />
+          <CcaPkcPanel />
+        </>
+      )}
+
+      {/* MPC: PA#18-20 */}
+      {demoTab === "mpc" && (
+        <>
+          <OtPanel />
+          <SecureAndPanel />
+          <MillionairePanel />
+        </>
+      )}
     </>
   );
 }

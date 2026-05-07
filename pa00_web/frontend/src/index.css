@@ -619,3 +619,87 @@ body {
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Demo Tab Bar ── */
+.demo-tab-bar {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.75rem 2rem;
+  background: linear-gradient(180deg, #0f172a, #0a0e1a);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.demo-tab {
+  padding: 0.5rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.demo-tab:hover {
+  background: #1e293b;
+  color: var(--text);
+}
+.demo-tab.active {
+  background: linear-gradient(135deg, #312e81, #1e3a5f);
+  color: var(--accent2);
+  border-color: var(--accent2);
+  box-shadow: 0 0 12px #22d3ee22;
+}
+
+.demo-section-header {
+  padding: 0.5rem 2rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-style: italic;
+  border-bottom: 1px solid var(--border);
+  background: #0d1117;
+}
+
+/* ── Oracle List ── */
+.oracle-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.oracle-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  background: #111827;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.72rem;
+  flex: 1 1 280px;
+  max-width: 500px;
+}
+.oracle-row span {
+  color: var(--accent2);
+  font-weight: 600;
+}
+.oracle-row code {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  word-break: break-all;
+}
+
+/* ── Subtle panel title ── */
+.panel-title.subtle {
+  font-size: 0.85rem;
+  color: var(--accent2);
+  margin-top: 1rem;
+  margin-bottom: 0.25rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}

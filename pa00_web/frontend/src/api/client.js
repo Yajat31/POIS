@@ -75,6 +75,15 @@ export async function submitCpaGuess({ challenge_id, guess }) {
   return res.json();
 }
 
+export async function cpaEncryptOracle({ challenge_id, message }) {
+  const res = await fetch(`${API_BASE}/pa03/cpa_encrypt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challenge_id, message }),
+  });
+  return res.json();
+}
+
 export async function runModeAnimator({ mode, message, flip_enabled = true, flip_block, flip_byte, reuse_iv = false }) {
   const res = await fetch(`${API_BASE}/pa04/mode_animator`, {
     method: "POST",
@@ -102,6 +111,15 @@ export async function submitMacForgery({ game_id, message, tag_hex }) {
   return res.json();
 }
 
+export async function queryMacOracle({ game_id, message }) {
+  const res = await fetch(`${API_BASE}/pa05/mac_oracle_query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ game_id, message }),
+  });
+  return res.json();
+}
+
 export async function runLengthExtension({ message, extension }) {
   const res = await fetch(`${API_BASE}/pa05/length_extension`, {
     method: "POST",
@@ -116,6 +134,33 @@ export async function runCcaMalleability({ message, flip_byte }) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, flip_byte }),
+  });
+  return res.json();
+}
+
+export async function startCcaGame({ message }) {
+  const res = await fetch(`${API_BASE}/pa06/cca_game_start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  return res.json();
+}
+
+export async function ccaEncrypt({ game_id, message }) {
+  const res = await fetch(`${API_BASE}/pa06/cca_encrypt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ game_id, message }),
+  });
+  return res.json();
+}
+
+export async function ccaDecrypt({ game_id, ciphertext_hex }) {
+  const res = await fetch(`${API_BASE}/pa06/cca_decrypt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ game_id, ciphertext_hex }),
   });
   return res.json();
 }
